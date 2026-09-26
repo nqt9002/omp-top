@@ -3,19 +3,20 @@ import { extractJsonPayload, parseNoisyJson } from "../src/json.mjs";
 import { aggregateCacheByProvider } from "../src/stats.mjs";
 import { snapshotsToQuota, mergeProviderReports } from "../src/quota.mjs";
 import { versionFromReleaseTag, releaseAssetNames, parseSha256 } from "../src/self.mjs";
+import { OmpTopApp } from "../src/top.mjs";
 
 let passed = 0;
-function test(name, fn) {
-  try { fn(); passed++; process.stdout.write(`✓ ${name}\n`); }
+async function test(name, fn) {
+  try { await fn(); passed++; process.stdout.write(`✓ ${name}\n`); }
   catch (error) { process.stderr.write(`✗ ${name}\n${error.stack || error}\n`); process.exitCode = 1; }
 }
 
-test("extractJsonPayload ignores omp banners", () => {
+await test("extractJsonPayload ignores omp banners", () => {
   assert.equal(extractJsonPayload('Synced 2 entries\n\n{"ok":true}\n'), '{"ok":true}');
   assert.deepEqual(parseNoisyJson('warning\n{"x":[1,2]}', "probe"), { x: [1, 2] });
 });
 
-test("provider cache rate is token weighted", () => {
+await test("provider cache rate is token weighted", () => {
   const rows = aggregateCacheByProvider([
     { provider: "openai-codex", totalRequests: 10, totalInputTokens: 900, totalCacheReadTokens: 100, totalCacheWriteTokens: 0 },
     { provider: "openai-codex", totalRequests: 1, totalInputTokens: 0, totalCacheReadTokens: 100, totalCacheWriteTokens: 0 },
@@ -25,7 +26,7 @@ test("provider cache rate is token weighted", () => {
   assert.ok(Math.abs(rows[0].cacheRate - 200 / 1100) < 1e-9);
 });
 
-test("snapshot history keeps latest account/window and reset", () => {
+await test("snapshot history keeps latest account/window and reset", () => {
   const base = { provider: "anthropic", accountKey: "acct", email: "a@example.test", accountId: "acct", limitId: "5h", label: "5 Hour", windowLabel: "5 Hour", status: "ok" };
   const payload = snapshotsToQuota([
     { ...base, recordedAt: 1000, usedFraction: 0.2, resetsAt: 5000 },
@@ -37,7 +38,7 @@ test("snapshot history keeps latest account/window and reset", () => {
   assert.equal(payload.reports[0].limits[0].window.resetsAt, 6000);
 });
 
-test("progressive provider merge never drops another provider", () => {
+await test("progressive provider merge never drops another provider", () => {
   const payload = {
     generatedAt: 100,
     reports: [
@@ -55,10 +56,7 @@ test("progressive provider merge never drops another provider", () => {
   assert.equal(codex.limits[0].amount.usedFraction, 0.8);
 });
 
-if (process.exitCode) process.exit(process.exitCode);
-process.stdout.write(`\n${passed} tests passed\n`);
-
-test("GitHub release helpers normalize version and assets", () => {
+await test("GitHub release helpers normalize version and assets", () => {
   assert.equal(versionFromReleaseTag("v0.5.0"), "0.5.0");
   assert.deepEqual(releaseAssetNames("v0.5.0"), {
     version: "0.5.0",
@@ -69,7 +67,35 @@ test("GitHub release helpers normalize version and assets", () => {
   assert.equal(parseSha256("a".repeat(64) + "  omp-top-v0.5.0.tar.gz\n"), "a".repeat(64));
 });
 
-test("GitHub release helper rejects malformed tags/checksums", () => {
+await test("GitHub release helper rejects malformed tags/checksums", () => {
   assert.throws(() => versionFromReleaseTag("latest"));
   assert.throws(() => parseSha256("not-a-checksum"));
 });
+
+await test("refresh path starts progressive quota without a missing-method crash", async () => {
+  let quotaStarts = 0;
+  let draws = 0;
+  const fakeUi = {
+    rows: 24,
+    start() {},
+    stop() {},
+    draw() { draws++; },
+  };
+  const app = new OmpTopApp({
+    ui: fakeUi,
+    deps: {
+      fetchStats: async () => ({ overall: {}, byModel: [] }),
+      loadHistoricalQuota: async () => ({ payload: undefined }),
+      createQuotaRefresh: () => ({
+        cancel() {},
+        run: async () => { quotaStarts++; },
+      }),
+    },
+  });
+  await app.refresh();
+  await Promise.resolve();
+  assert.equal(quotaStarts, 1);
+  assert.ok(draws >= 1);
+  app.dispose();
+});
+

@@ -194,6 +194,17 @@ or from a source checkout:
 
 ## Development
 
+### Development workflow
+
+Bug fixes and feature changes follow an issue-first workflow:
+
+1. open a GitHub issue;
+2. create a dedicated branch;
+3. implement and test the change;
+4. open a pull request linked with `Fixes #<issue>`;
+5. merge only after CI passes.
+
+
 There are no npm dependencies.
 
 ```bash
@@ -222,6 +233,6 @@ Normal commits that do not bump the version do not create another release.
 
 ## Status
 
-Current source release: **v0.5.0**.
+Current source release: **v0.5.1**.
 
 `omp-top` is an independent utility built around OMP's CLI contracts. It is not an official Oh My Pi project.

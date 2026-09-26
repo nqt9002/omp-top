@@ -26,11 +26,16 @@ function planLabel(report) {
   return "";
 }
 
-function renderStats(stats) {
+function sectionTitle(label, width) {
+  const maxRule = Math.max(6, Math.min(34, width - label.length - 5));
+  return `${style.bold(label)} ${style.dim("─".repeat(maxRule))}`;
+}
+
+function renderStats(stats, width = 100) {
   if (!stats) return [style.dim("  Stats unavailable")];
   const o = stats.overall ?? {};
   const lines = [
-    style.bold("REQUEST / CACHE"),
+    sectionTitle("REQUEST / CACHE", width),
     `  Requests      ${compactNumber(Number(o.totalRequests || 0)).padEnd(10)}  Cache rate      ${percent(Number(o.cacheRate || 0))}`,
     `  Input         ${compactNumber(Number(o.totalInputTokens || 0)).padEnd(10)}  Cache read      ${compactNumber(Number(o.totalCacheReadTokens || 0))}`,
     `  Output        ${compactNumber(Number(o.totalOutputTokens || 0)).padEnd(10)}  Cache write     ${compactNumber(Number(o.totalCacheWriteTokens || 0))}`,
@@ -39,7 +44,7 @@ function renderStats(stats) {
 
   const providers = aggregateCacheByProvider(stats.byModel);
   if (providers.length) {
-    lines.push("", style.bold("CACHE BY PROVIDER"));
+    lines.push("", sectionTitle("CACHE BY PROVIDER", width));
     lines.push(style.dim("  Provider                   Req      Hit       Read      Write"));
     for (const row of providers) {
       const name = providerLabel(row.provider).slice(0, 24).padEnd(24);
@@ -53,7 +58,7 @@ function renderStats(stats) {
 
   const models = sortModels(stats.byModel);
   if (models.length) {
-    lines.push("", style.bold("CACHE BY MODEL"));
+    lines.push("", sectionTitle("CACHE BY MODEL", width));
     lines.push(style.dim("  Provider             Model                             Req     Hit      Read     Write    Save"));
     for (const row of models) {
       const provider = providerLabel(String(row.provider ?? "unknown")).slice(0, 18).padEnd(18);
@@ -81,7 +86,7 @@ function stateText(state, refreshing) {
 
 function renderQuota(quota, width, providerStates, refreshing) {
   const reports = quota?.reports ?? [];
-  const lines = [style.bold("QUOTA")];
+  const lines = [sectionTitle("QUOTA", width)];
   if (!reports.length) {
     lines.push(refreshing ? style.dim("  Waiting for quota results…") : style.dim("  No quota data available"));
     return lines;
@@ -96,11 +101,11 @@ function renderQuota(quota, width, providerStates, refreshing) {
     const providerReports = grouped.get(provider) ?? [];
     lines.push("");
     const state = stateText(providerStates.get(provider), refreshing);
-    lines.push(`${style.bold(providerLabel(provider))}${state ? `  ${state}` : ""}`);
+    lines.push(`  ${style.bold(providerLabel(provider))}${state ? `  ${state}` : ""}`);
     providerReports.sort((a, b) => accountLabel(a, "").localeCompare(accountLabel(b, ""))).forEach((report, index) => {
       const identity = accountLabel(report, providerReports.length > 1 ? `Account ${index + 1}` : "Account");
       const plan = planLabel(report);
-      lines.push(`  ${style.cyan(identity)}${plan ? style.dim(` · ${plan}`) : ""}`);
+      lines.push(`    ${style.cyan(identity)}${plan ? style.dim(` · ${plan}`) : ""}`);
       const limits = report.limits ?? [];
       if (!limits.length) { lines.push(style.dim("    no quota windows reported")); return; }
       for (const limit of limits) {
@@ -110,7 +115,7 @@ function renderQuota(quota, width, providerStates, refreshing) {
         const bar = progressBar(fraction, barWidth);
         const pct = percent(fraction).padStart(6);
         const reset = formatReset(limit.window?.resetsAt).padStart(13);
-        lines.push(`    ${label} ${bar} ${quotaColor(fraction, pct)} ${reset}`.trimEnd());
+        lines.push(`      ${label} ${bar} ${quotaColor(fraction, pct)} ${reset}`.trimEnd());
       }
     });
   }
@@ -130,11 +135,17 @@ export class OmpTopApp {
   #quotaRefreshing = false;
   #quotaRun;
   #disposed = false;
+  #deps;
 
-  constructor({ redact = false } = {}) {
+  constructor({ redact = false, ui, deps = {} } = {}) {
     this.#redact = redact;
     this.#done = Promise.withResolvers();
-    this.#ui = new TerminalUI({ render: (w, h) => this.render(w, h), input: data => this.handleInput(data) });
+    this.#deps = {
+      fetchStats: deps.fetchStats ?? fetchStats,
+      loadHistoricalQuota: deps.loadHistoricalQuota ?? loadHistoricalQuota,
+      createQuotaRefresh: deps.createQuotaRefresh ?? (() => new ProgressiveQuotaRefresh()),
+    };
+    this.#ui = ui ?? new TerminalUI({ render: (w, h) => this.render(w, h), input: data => this.handleInput(data) });
   }
 
   async run() {
@@ -152,7 +163,7 @@ export class OmpTopApp {
 
   async #bootstrap() {
     try {
-      const historical = await loadHistoricalQuota(this.#redact);
+      const historical = await this.#deps.loadHistoricalQuota(this.#redact);
       if (historical.payload) {
         this.#snapshot.quota = historical.payload;
         this.#snapshot.quotaUpdatedAt = historical.payload.generatedAt;
@@ -171,7 +182,7 @@ export class OmpTopApp {
   async refresh() {
     if (!this.#statsRefreshing) {
       this.#statsRefreshing = true;
-      void fetchStats().then(raw => {
+      void this.#deps.fetchStats().then(raw => {
         if (this.#disposed) return;
         this.#snapshot.stats = normalizeStats(raw);
         this.#snapshot.statsUpdatedAt = Date.now();
@@ -180,14 +191,14 @@ export class OmpTopApp {
         if (!this.#disposed) this.setStatus(style.yellow(`Stats refresh failed: ${error.message || error}`));
       }).finally(() => { this.#statsRefreshing = false; this.#ui.draw(); });
     }
-    if (!this.#quotaRefreshing) instartQuotaRefresh();
+    if (!this.#quotaRefreshing) this.startQuotaRefresh();
   }
 
   startQuotaRefresh() {
     if (this.#quotaRefreshing || this.#disposed) return;
     this.#quotaRefreshing = true;
     for (const [provider, state] of this.#states) this.#states.set(provider, { ...state, status: "refreshing", error: undefined });
-    const runner = new ProgressiveQuotaRefresh();
+    const runner = this.#deps.createQuotaRefresh();
     this.#quotaRun = runner;
     this.setStatus("Refreshing quota progressively…");
     void runner.run(this.#redact, {
@@ -241,14 +252,15 @@ export class OmpTopApp {
   render(width, height) {
     const statsTime = formatClock(this.#snapshot.statsUpdatedAt);
     const quotaTime = formatClock(this.#snapshot.quotaUpdatedAt);
-    const left = ` ${style.bold("omp top")}${process.env.OMP_PROFILE ? style.dim(` · profile ${process.env.OMP_PROFILE}`) : ""}`;
+    const left = ` ${style.bold("OMP TOP")}${process.env.OMP_PROFILE ? style.dim(` · profile ${process.env.OMP_PROFILE}`) : ""}`;
     const active = [this.#statsRefreshing ? "stats" : "", this.#quotaRefreshing ? "quota" : ""].filter(Boolean);
     const right = active.length ? style.yellow(`refreshing ${active.join("+")}…`) : style.dim(`stats ${statsTime} · quota ${quotaTime}`);
     const pad = Math.max(1, width - visibleWidth(left) - visibleWidth(right));
     const header = truncateAnsi(`${left}${" ".repeat(pad)}${right}`, width);
 
-    const body = ["", ...renderStats(this.#snapshot.stats), "", ...renderQuota(this.#snapshot.quota, width, this.#states, this.#quotaRefreshing), ""];
+    const body = ["", ...renderStats(this.#snapshot.stats, width), "", ...renderQuota(this.#snapshot.quota, width, this.#states, this.#quotaRefreshing), ""];
     const footer = [
+      truncateAnsi(style.dim("─".repeat(Math.max(1, width))), width),
       truncateAnsi(` ${Date.now() - this.#statusAt < STATUS_TTL_MS ? this.#status : ""}`, width),
       truncateAnsi(style.dim(" r refresh · ↑/↓/j/k scroll · PgUp/PgDn · Home/End · q/Esc/Ctrl+D/Ctrl+C exit"), width),
     ];
