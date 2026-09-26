@@ -2,7 +2,7 @@
 import { installSelf, uninstallSelf, upgradeSelf, readPackageVersion } from "./self.mjs";
 
 function parse(argv) {
-  const result = { command: "run", redact: false, profile: undefined, quotaTimeout: undefined, tag: "latest", help: false, version: false };
+  const result = { command: "run", redact: false, profile: undefined, quotaTimeout: undefined, tag: undefined, prerelease: false, help: false, version: false };
   let commandSet = false;
   for (let i = 0; i < argv.length; i++) {
     const arg = argv[i];
@@ -10,8 +10,8 @@ function parse(argv) {
     if (arg === "--redact") { result.redact = true; continue; }
     if (arg === "--profile") { result.profile = argv[++i]; continue; }
     if (arg === "--quota-timeout") { result.quotaTimeout = argv[++i]; continue; }
-    if (arg === "--tag") { result.tag = argv[++i] || "latest"; continue; }
-    if (arg === "--beta") { result.tag = "beta"; continue; }
+    if (arg === "--tag") { result.tag = argv[++i]; if (!result.tag) throw new Error("--tag requires a GitHub release tag"); continue; }
+    if (arg === "--beta") { result.prerelease = true; continue; }
     if (arg === "-h" || arg === "--help") { result.help = true; continue; }
     if (arg === "-v" || arg === "--version") { result.version = true; continue; }
     throw new Error(`Unknown argument: ${arg}`);
@@ -25,13 +25,13 @@ function help() {
 Usage:
   omp-top [run] [--profile NAME] [--redact] [--quota-timeout MS]
   omp-top install
-  omp-top upgrade [--tag TAG | --beta]
+  omp-top upgrade [--tag vX.Y.Z | --beta]
   omp-top uninstall
 
 Commands:
   run        Open the monitor (default)
   install    Install persistent launcher under ~/.local/bin
-  upgrade    Install the newest npm release with Bun's package runner
+  upgrade    Upgrade directly from GitHub Releases
   uninstall  Remove the persistent installation
 
 Monitor options:
@@ -40,8 +40,8 @@ Monitor options:
   --quota-timeout MS   Optional hard cap for background quota refresh; 0 = none
 
 Upgrade options:
-  --tag TAG            npm dist-tag to install (default: latest)
-  --beta               Shortcut for --tag beta
+  --tag TAG            Install one exact GitHub Release tag (for example v0.5.0)
+  --beta               Install the newest GitHub prerelease
 
 Keys:
   r refresh · ↑/↓/j/k scroll · PgUp/PgDn · Home/End · q/Esc/Ctrl+D/Ctrl+C exit
@@ -69,8 +69,8 @@ if (options.command === "uninstall") {
   process.exit(0);
 }
 if (options.command === "upgrade") {
-  process.stdout.write(`Upgrading omp-top via npm dist-tag '${options.tag}'…\n`);
-  try { await upgradeSelf({ tag: options.tag }); }
+  process.stdout.write(`Checking GitHub Releases for an omp-top upgrade…\n`);
+  try { await upgradeSelf({ tag: options.tag, prerelease: options.prerelease }); }
   catch (error) { process.stderr.write(`${error instanceof Error ? error.message : String(error)}\n`); process.exit(1); }
   process.exit(0);
 }

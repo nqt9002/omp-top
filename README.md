@@ -40,39 +40,6 @@ If OMP changes the internal `usage_history` schema, progressive quota degrades g
 - Bun `>= 1.3.14`.
 - macOS/Linux or another Unix-like environment supported by Bun/OMP.
 
-## Install from npm
-
-Recommended:
-
-```bash
-bunx omp-top@latest install
-```
-
-Using npm/npx is also supported:
-
-```bash
-npx --yes omp-top@latest install
-```
-
-The persistent launcher is installed to:
-
-```text
-~/.local/bin/omp-top
-```
-
-and runtime files to:
-
-```text
-~/.local/share/omp-top
-```
-
-If `~/.local/bin` is not in your PATH:
-
-```bash
-echo 'export PATH="$HOME/.local/bin:$PATH"' >> ~/.zshrc
-source ~/.zshrc
-```
-
 ## Install from GitHub source
 
 ```bash
@@ -103,36 +70,30 @@ omp-top
 
 ## Upgrade omp-top
 
-The preferred upgrade path is now one command:
+Upgrade directly from GitHub Releases:
 
 ```bash
 omp-top upgrade
 ```
 
-`omp-top upgrade` resolves the current npm `latest` dist-tag, then asks Bun to install that **exact version**. This avoids relying on Bun's cached `latest` manifest.
+No npm, npx, bunx, or Git checkout is involved. The command:
 
-Preview channel:
+1. reads the latest stable GitHub Release;
+2. downloads `omp-top-vX.Y.Z.tar.gz` and its SHA256 file;
+3. verifies SHA256 and archive paths;
+4. validates the runtime source;
+5. replaces the installed copy only after validation succeeds.
+
+Install one exact GitHub Release:
+
+```bash
+omp-top upgrade --tag v0.5.0
+```
+
+Install the newest prerelease:
 
 ```bash
 omp-top upgrade --beta
-```
-
-or any npm dist-tag:
-
-```bash
-omp-top upgrade --tag next
-```
-
-You can also run the package runner directly:
-
-```bash
-bunx omp-top@latest install
-```
-
-or:
-
-```bash
-npx --yes omp-top@latest install
 ```
 
 ## OMP upgrades
@@ -217,7 +178,7 @@ If the table/schema is unavailable (or an auth broker does not maintain local hi
 - The OMP database is opened read-only for progressive quota history.
 - No localhost HTTP server is exposed.
 - No arbitrary shell command UI is provided.
-- Upgrade downloads only the published `omp-top` npm package through Bun's package runner.
+- Upgrade downloads only versioned assets from this repository's GitHub Releases and verifies their SHA256 before installation.
 
 ## Uninstall
 
@@ -246,24 +207,21 @@ The test suite also runs under Node for the non-Bun-specific compatibility logic
 node test/run.mjs
 ```
 
-## Publishing
+## Releasing
 
-The repo contains:
+There is no npm publishing step and no `NPM_TOKEN`.
 
-- `.github/workflows/ci.yml` — Bun tests on pushes and pull requests.
-- `.github/workflows/publish.yml` — publishes tags matching `v*` to npm.
+When `package.json` gets a new version on `main`, `.github/workflows/release.yml` runs the full build/tests and creates a GitHub Release if `v<version>` does not already exist. The release contains:
 
-To enable npm publishing, add a GitHub Actions secret named `NPM_TOKEN`, bump `package.json` to the release version, commit it, then push the matching tag. Example for v0.4.1:
-
-```bash
-git tag v0.4.1
-git push origin v0.4.1
+```text
+omp-top-vX.Y.Z.tar.gz
+omp-top-vX.Y.Z.tar.gz.sha256
 ```
 
-The workflow verifies that the tag and package version match before publishing.
+Normal commits that do not bump the version do not create another release.
 
 ## Status
 
-Current source release: **v0.4.1**.
+Current source release: **v0.5.0**.
 
 `omp-top` is an independent utility built around OMP's CLI contracts. It is not an official Oh My Pi project.

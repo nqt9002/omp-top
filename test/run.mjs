@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { extractJsonPayload, parseNoisyJson } from "../src/json.mjs";
 import { aggregateCacheByProvider } from "../src/stats.mjs";
 import { snapshotsToQuota, mergeProviderReports } from "../src/quota.mjs";
+import { versionFromReleaseTag, releaseAssetNames, parseSha256 } from "../src/self.mjs";
 
 let passed = 0;
 function test(name, fn) {
@@ -56,3 +57,19 @@ test("progressive provider merge never drops another provider", () => {
 
 if (process.exitCode) process.exit(process.exitCode);
 process.stdout.write(`\n${passed} tests passed\n`);
+
+test("GitHub release helpers normalize version and assets", () => {
+  assert.equal(versionFromReleaseTag("v0.5.0"), "0.5.0");
+  assert.deepEqual(releaseAssetNames("v0.5.0"), {
+    version: "0.5.0",
+    archive: "omp-top-v0.5.0.tar.gz",
+    checksum: "omp-top-v0.5.0.tar.gz.sha256",
+    root: "omp-top-0.5.0",
+  });
+  assert.equal(parseSha256("a".repeat(64) + "  omp-top-v0.5.0.tar.gz\n"), "a".repeat(64));
+});
+
+test("GitHub release helper rejects malformed tags/checksums", () => {
+  assert.throws(() => versionFromReleaseTag("latest"));
+  assert.throws(() => parseSha256("not-a-checksum"));
+});
