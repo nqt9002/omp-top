@@ -8,6 +8,7 @@ import {
 } from "./format.mjs";
 
 const STATUS_TTL_MS = 8000;
+const DASHBOARD_MAX_WIDTH = 112;
 
 function accountLabel(report, fallback) {
   const metadata = report?.metadata ?? {};
@@ -26,21 +27,45 @@ function planLabel(report) {
   return "";
 }
 
-function sectionTitle(label, width) {
-  const maxRule = Math.max(6, Math.min(34, width - label.length - 5));
-  return `${style.bold(label)} ${style.dim("─".repeat(maxRule))}`;
+function sectionTitle(label, width, status = "") {
+  const statusWidth = visibleWidth(status);
+  const available = Math.max(6, width - label.length - statusWidth - (status ? 4 : 2));
+  const ruleWidth = Math.max(6, Math.min(34, available));
+  return `${style.bold(label)} ${style.dim("─".repeat(ruleWidth))}${status ? `  ${status}` : ""}`;
 }
 
-function renderStats(stats, width = 100) {
-  if (!stats) return [style.dim("  Stats unavailable")];
+function statsStateText({ stats, refreshing, startedAt, updatedAt, error, now = Date.now() }) {
+  const elapsed = startedAt ? formatAge(startedAt, now) : "0s";
+  if (refreshing && !stats) return style.yellow(`↻ calculating · ${elapsed}`);
+  if (refreshing && stats) return style.yellow(`↻ refreshing · ${elapsed} · showing previous`);
+  if (error && stats) return style.red("⚠ refresh failed · showing previous");
+  if (error) return style.red("⚠ unavailable");
+  if (stats && updatedAt) return style.green(`✓ updated ${formatClock(updatedAt)}`);
+  return style.dim("not loaded");
+}
+
+function renderStats(stats, width = 100, state = {}) {
+  const status = statsStateText({ stats, ...state });
+  const lines = [sectionTitle("REQUEST / CACHE", width, status)];
+  if (!stats) {
+    if (state.refreshing) {
+      lines.push(style.dim("  Syncing OMP session history and calculating cache. First load may take a while."));
+    } else if (state.error) {
+      lines.push(style.red(`  ${String(state.error).slice(0, Math.max(20, width - 4))}`));
+    } else {
+      lines.push(style.dim("  Stats have not been loaded yet."));
+    }
+    return lines;
+  }
+  if (state.refreshing) lines.push(style.dim("  Showing the previous snapshot while the refresh runs."));
+  else if (state.error) lines.push(style.dim("  Previous snapshot preserved; the latest refresh failed."));
   const o = stats.overall ?? {};
-  const lines = [
-    sectionTitle("REQUEST / CACHE", width),
+  lines.push(
     `  Requests      ${compactNumber(Number(o.totalRequests || 0)).padEnd(10)}  Cache rate      ${percent(Number(o.cacheRate || 0))}`,
     `  Input         ${compactNumber(Number(o.totalInputTokens || 0)).padEnd(10)}  Cache read      ${compactNumber(Number(o.totalCacheReadTokens || 0))}`,
     `  Output        ${compactNumber(Number(o.totalOutputTokens || 0)).padEnd(10)}  Cache write     ${compactNumber(Number(o.totalCacheWriteTokens || 0))}`,
     `  Errors        ${compactNumber(Number(o.failedRequests || 0)).padEnd(10)}  Cache savings   ${percent(Number(o.cacheSavings || 0))}`,
-  ];
+  );
 
   const providers = aggregateCacheByProvider(stats.byModel);
   if (providers.length) {
@@ -132,6 +157,9 @@ export class OmpTopApp {
   #status = "";
   #statusAt = 0;
   #statsRefreshing = false;
+  #statsRefreshStartedAt;
+  #statsError;
+  #statsPulse;
   #quotaRefreshing = false;
   #quotaRun;
   #disposed = false;
@@ -158,6 +186,8 @@ export class OmpTopApp {
     if (this.#disposed) return;
     this.#disposed = true;
     this.#quotaRun?.cancel();
+    if (this.#statsPulse) clearInterval(this.#statsPulse);
+    this.#statsPulse = undefined;
     this.#ui.stop();
   }
 
@@ -182,14 +212,31 @@ export class OmpTopApp {
   async refresh() {
     if (!this.#statsRefreshing) {
       this.#statsRefreshing = true;
+      this.#statsRefreshStartedAt = Date.now();
+      this.#statsError = undefined;
+      if (this.#statsPulse) clearInterval(this.#statsPulse);
+      this.#statsPulse = setInterval(() => {
+        if (!this.#disposed && this.#statsRefreshing) this.#ui.draw();
+      }, 1000);
+      this.#ui.draw();
       void this.#deps.fetchStats().then(raw => {
         if (this.#disposed) return;
         this.#snapshot.stats = normalizeStats(raw);
         this.#snapshot.statsUpdatedAt = Date.now();
+        this.#statsError = undefined;
         this.setStatus(this.#quotaRefreshing ? "Stats refreshed · quota continues in background" : "Stats refreshed");
       }).catch(error => {
-        if (!this.#disposed) this.setStatus(style.yellow(`Stats refresh failed: ${error.message || error}`));
-      }).finally(() => { this.#statsRefreshing = false; this.#ui.draw(); });
+        if (!this.#disposed) {
+          this.#statsError = String(error?.message || error);
+          this.setStatus(style.yellow(`Stats refresh failed: ${this.#statsError}`));
+        }
+      }).finally(() => {
+        this.#statsRefreshing = false;
+        this.#statsRefreshStartedAt = undefined;
+        if (this.#statsPulse) clearInterval(this.#statsPulse);
+        this.#statsPulse = undefined;
+        this.#ui.draw();
+      });
     }
     if (!this.#quotaRefreshing) this.startQuotaRefresh();
   }
@@ -250,19 +297,25 @@ export class OmpTopApp {
   }
 
   render(width, height) {
+    const dashboardWidth = Math.max(40, Math.min(width, DASHBOARD_MAX_WIDTH));
     const statsTime = formatClock(this.#snapshot.statsUpdatedAt);
     const quotaTime = formatClock(this.#snapshot.quotaUpdatedAt);
     const left = ` ${style.bold("OMP TOP")}${process.env.OMP_PROFILE ? style.dim(` · profile ${process.env.OMP_PROFILE}`) : ""}`;
-    const active = [this.#statsRefreshing ? "stats" : "", this.#quotaRefreshing ? "quota" : ""].filter(Boolean);
-    const right = active.length ? style.yellow(`refreshing ${active.join("+")}…`) : style.dim(`stats ${statsTime} · quota ${quotaTime}`);
-    const pad = Math.max(1, width - visibleWidth(left) - visibleWidth(right));
-    const header = truncateAnsi(`${left}${" ".repeat(pad)}${right}`, width);
+    const right = style.dim(`stats ${statsTime} · quota ${quotaTime}`);
+    const pad = Math.max(2, dashboardWidth - visibleWidth(left) - visibleWidth(right));
+    const header = truncateAnsi(`${left}${" ".repeat(pad)}${right}`, dashboardWidth);
 
-    const body = ["", ...renderStats(this.#snapshot.stats, width), "", ...renderQuota(this.#snapshot.quota, width, this.#states, this.#quotaRefreshing), ""];
+    const statsState = {
+      refreshing: this.#statsRefreshing,
+      startedAt: this.#statsRefreshStartedAt,
+      updatedAt: this.#snapshot.statsUpdatedAt,
+      error: this.#statsError,
+    };
+    const body = ["", ...renderStats(this.#snapshot.stats, dashboardWidth, statsState), "", ...renderQuota(this.#snapshot.quota, dashboardWidth, this.#states, this.#quotaRefreshing), ""];
     const footer = [
-      truncateAnsi(style.dim("─".repeat(Math.max(1, width))), width),
-      truncateAnsi(` ${Date.now() - this.#statusAt < STATUS_TTL_MS ? this.#status : ""}`, width),
-      truncateAnsi(style.dim(" r refresh · ↑/↓/j/k scroll · PgUp/PgDn · Home/End · q/Esc/Ctrl+D/Ctrl+C exit"), width),
+      truncateAnsi(style.dim("─".repeat(Math.max(1, dashboardWidth))), dashboardWidth),
+      truncateAnsi(` ${Date.now() - this.#statusAt < STATUS_TTL_MS ? this.#status : ""}`, dashboardWidth),
+      truncateAnsi(style.dim(" r refresh · ↑/↓/j/k scroll · PgUp/PgDn · Home/End · q/Esc/Ctrl+D/Ctrl+C exit"), dashboardWidth),
     ];
     const bodyHeight = Math.max(1, height - 1 - footer.length);
     const maxOffset = Math.max(0, body.length - bodyHeight);

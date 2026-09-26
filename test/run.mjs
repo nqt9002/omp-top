@@ -99,3 +99,41 @@ await test("refresh path starts progressive quota without a missing-method crash
   app.dispose();
 });
 
+
+await test("first-load stats state is visible inline and not mislabeled unavailable", async () => {
+  let resolveStats;
+  const pendingStats = new Promise(resolve => { resolveStats = resolve; });
+  const fakeUi = { rows: 28, start() {}, stop() {}, draw() {} };
+  const app = new OmpTopApp({
+    ui: fakeUi,
+    deps: {
+      fetchStats: () => pendingStats,
+      loadHistoricalQuota: async () => ({ payload: undefined }),
+      createQuotaRefresh: () => ({ cancel() {}, run: async () => {} }),
+    },
+  });
+  await app.refresh();
+  const screen = app.render(220, 28).join("\n");
+  assert.ok(screen.includes("REQUEST / CACHE"));
+  assert.ok(screen.includes("calculating"));
+  assert.ok(screen.includes("First load may take a while"));
+  assert.ok(!screen.includes("Stats unavailable"));
+  resolveStats({ overall: {}, byModel: [] });
+  await Promise.resolve();
+  app.dispose();
+});
+
+await test("wide terminal keeps header metadata inside logical dashboard width", () => {
+  const fakeUi = { rows: 28, start() {}, stop() {}, draw() {} };
+  const app = new OmpTopApp({
+    ui: fakeUi,
+    deps: {
+      fetchStats: async () => ({ overall: {}, byModel: [] }),
+      loadHistoricalQuota: async () => ({ payload: undefined }),
+      createQuotaRefresh: () => ({ cancel() {}, run: async () => {} }),
+    },
+  });
+  const header = app.render(240, 28)[0].replace(/\x1b\[[0-9;]*m/g, "");
+  assert.ok(header.length <= 112);
+  app.dispose();
+});

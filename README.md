@@ -292,7 +292,7 @@ Docs-only changes do not need a version bump.
 
 ## Current version
 
-**v0.5.1**
+**v0.5.2**
 
 ## License
 
