@@ -1,0 +1,108 @@
+const ANSI_RE = /\x1B(?:\[[0-?]*[ -/]*[@-~]|\][^\x07]*(?:\x07|\x1B\\))/g;
+
+export const colorEnabled = process.env.NO_COLOR === undefined;
+function ansi(code, text) { return colorEnabled ? `\x1b[${code}m${text}\x1b[0m` : text; }
+export const style = {
+  bold: text => ansi("1", text),
+  dim: text => ansi("2", text),
+  red: text => ansi("31", text),
+  green: text => ansi("32", text),
+  yellow: text => ansi("33", text),
+  cyan: text => ansi("36", text),
+};
+
+export function stripAnsi(text) { return text.replace(ANSI_RE, ""); }
+export function visibleWidth(text) {
+  const plain = stripAnsi(text);
+  if (globalThis.Bun?.stringWidth) return Bun.stringWidth(plain);
+  return [...plain].length;
+}
+export function truncateAnsi(text, width) {
+  if (width <= 0) return "";
+  if (visibleWidth(text) <= width) return text;
+  const plain = stripAnsi(text);
+  const chars = [...plain];
+  if (chars.length <= width) return plain;
+  return chars.slice(0, Math.max(0, width - 1)).join("") + "…";
+}
+export function padRight(text, width) {
+  const w = visibleWidth(text);
+  return w >= width ? truncateAnsi(text, width) : text + " ".repeat(width - w);
+}
+export function compactNumber(value) {
+  if (!Number.isFinite(value)) return "-";
+  const abs = Math.abs(value);
+  if (abs >= 1e9) return `${(value / 1e9).toFixed(abs >= 10e9 ? 1 : 2)}B`;
+  if (abs >= 1e6) return `${(value / 1e6).toFixed(abs >= 10e6 ? 1 : 2)}M`;
+  if (abs >= 1e3) return `${(value / 1e3).toFixed(abs >= 10e3 ? 1 : 2)}K`;
+  return Math.round(value).toLocaleString("en-US");
+}
+export function percent(fraction) {
+  if (!Number.isFinite(fraction)) return "-";
+  const value = fraction * 100;
+  return `${value >= 10 ? value.toFixed(0) : value.toFixed(1)}%`;
+}
+export function formatClock(timestamp) {
+  if (!timestamp) return "-";
+  return new Date(timestamp).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" });
+}
+export function formatAge(timestamp, now = Date.now()) {
+  if (!timestamp) return "unknown";
+  const sec = Math.max(0, Math.round((now - timestamp) / 1000));
+  if (sec < 60) return `${sec}s`;
+  const min = Math.floor(sec / 60);
+  if (min < 60) return `${min}m`;
+  const hours = Math.floor(min / 60);
+  if (hours < 24) return `${hours}h`;
+  return `${Math.floor(hours / 24)}d`;
+}
+export function formatReset(resetsAt, now = Date.now()) {
+  if (!Number.isFinite(resetsAt)) return "";
+  let min = Math.ceil((resetsAt - now) / 60000);
+  if (min <= 0) return "reset now";
+  if (min < 60) return `reset ${min}m`;
+  const h = Math.floor(min / 60); min %= 60;
+  if (h < 24) return `reset ${h}h${min ? ` ${min}m` : ""}`;
+  const d = Math.floor(h / 24); const rh = h % 24;
+  return `reset ${d}d${rh ? ` ${rh}h` : ""}`;
+}
+export function providerLabel(provider) {
+  const known = {
+    "openai-codex": "OpenAI Codex",
+    anthropic: "Anthropic",
+    "google-antigravity": "Google Antigravity",
+    "google-gemini-cli": "Google Gemini CLI",
+    "github-copilot": "GitHub Copilot",
+    "opencode-go": "OpenCode Go",
+    cursor: "Cursor",
+    devin: "Devin",
+    xai: "xAI",
+    "xai-oauth": "xAI",
+  };
+  return known[provider] ?? provider.split(/[-_]/g).filter(Boolean).map(x => x[0]?.toUpperCase() + x.slice(1)).join(" ");
+}
+export function usedFraction(amount = {}) {
+  if (Number.isFinite(amount.usedFraction)) return amount.usedFraction;
+  if (Number.isFinite(amount.used) && Number.isFinite(amount.limit) && amount.limit > 0) return amount.used / amount.limit;
+  if (amount.unit === "percent" && Number.isFinite(amount.used)) return amount.used / 100;
+  if (Number.isFinite(amount.remainingFraction)) return Math.max(0, 1 - amount.remainingFraction);
+  return undefined;
+}
+export function quotaColor(fraction, text) {
+  if (!Number.isFinite(fraction)) return style.dim(text);
+  if (fraction >= 1) return style.red(text);
+  if (fraction >= 0.8) return style.yellow(text);
+  return style.green(text);
+}
+export function cacheColor(fraction, text) {
+  if (!Number.isFinite(fraction)) return style.dim(text);
+  if (fraction >= 0.8) return style.green(text);
+  if (fraction >= 0.5) return style.yellow(text);
+  return style.red(text);
+}
+export function progressBar(fraction, width = 16) {
+  const f = Number.isFinite(fraction) ? Math.max(0, Math.min(1, fraction)) : 0;
+  const fill = Math.round(f * width);
+  const text = `${"█".repeat(fill)}${"░".repeat(width - fill)}`;
+  return quotaColor(fraction, text);
+}

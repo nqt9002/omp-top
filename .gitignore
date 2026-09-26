@@ -3,3 +3,4 @@ bun.lock
 bun.lockb
 .DS_Store
 *.log
+*.tgz

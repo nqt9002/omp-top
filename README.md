@@ -1,142 +1,159 @@
 # omp-top
 
-A lightweight fullscreen terminal monitor for **Oh My Pi (OMP)**. `omp-top` gives you one place to inspect request/cache statistics, cache efficiency by provider and model, and provider-account quota without opening a browser or running a full IDE.
+A lightweight fullscreen terminal monitor for **Oh My Pi (OMP)**. It shows request/cache statistics, cache efficiency by provider/model, and provider-account quota in one terminal UI.
 
-## Highlights
+## Why v0.4 is different
 
-- Overall request, token, cache-read/cache-write, cache hit-rate, and cache-savings metrics.
-- Cache breakdown by **provider** and exact **model**.
-- Progressive quota rendering: fast providers appear first; slower providers such as Claude update later without blocking the rest of the UI.
-- Last-known quota remains visible while a live refresh is in progress.
-- Uses OMP's own stats/auth/usage mechanisms; `omp-top` does not implement provider OAuth or store provider secrets.
-- Read-only monitoring UI: no web server, Electron shell, MCP manager, editor, or arbitrary command surface.
-- OMP profile support and account-identity redaction.
+`omp-top` **does not import or pin any `@oh-my-pi/*` npm package**.
 
-## How it works
+Runtime dependencies are intentionally limited to:
 
-Stats use OMP's official `@oh-my-pi/omp-stats` package:
+- the installed `omp` executable;
+- Bun built-ins (`bun:sqlite`, process/stdin/stdout, filesystem APIs).
 
-1. `syncAllSessions()` incrementally syncs new session JSONL entries into OMP's stats database.
-2. `getDashboardStats()` provides request/cache/model aggregates.
-
-Quota refresh uses one background `omp usage --json` run. While it is still running, `omp-top` watches OMP's read-only `usage_history` snapshots and progressively updates providers/accounts as each result becomes available. A slow Claude usage request therefore does not hold back Codex, Gemini, or already-cached quota.
+That means a normal OMP upgrade does **not** require reinstalling `omp-top`.
 
 ```text
-OMP sessions ──> syncAllSessions() ──> stats/cache ──┐
-                                                    │
-OMP usage ─────> usage_history snapshots ───────────┼──> omp-top TUI
-       ├─ Codex done   ─────────────────────────────┤
-       ├─ Gemini done  ─────────────────────────────┤
-       └─ Claude later ─────────────────────────────┘
+omp-top
+  ├─ omp stats --json
+  ├─ omp usage --json
+  └─ bun:sqlite → OMP usage_history (read-only, progressive quota only)
 ```
+
+If OMP changes the internal `usage_history` schema, progressive quota degrades gracefully to the final `omp usage --json` result instead of crashing the monitor.
+
+## Features
+
+- Overall requests, errors, input/output tokens, cache reads/writes, cache hit rate, and cache savings.
+- Cache breakdown by **provider**.
+- Cache breakdown by exact **model**.
+- Progressive quota rendering: fast providers appear first; slower providers such as Claude update later.
+- Keeps the last-known quota visible while refresh is still running.
+- Named OMP profile support.
+- Account-identity redaction.
+- No web server, Electron app, MCP runtime, or independent OAuth implementation.
+- Built-in self-install, self-upgrade, and uninstall commands.
 
 ## Requirements
 
-- macOS or another Unix-like environment supported by OMP/Bun
-- OMP already installed and available as `omp`
-- Bun `>= 1.3.14`
+- OMP installed and available as `omp`.
+- Bun `>= 1.3.14`.
+- macOS/Linux or another Unix-like environment supported by Bun/OMP.
 
-## Install
+## Install from npm
 
-Clone the repository and run the installer:
+Recommended:
 
 ```bash
-git clone https://github.com/nqt9002/omp-top.git
-cd omp-top
-chmod +x install.sh
-./install.sh
+bunx omp-top@latest install
 ```
 
-The installer detects your installed OMP version and installs matching versions of:
+Using npm/npx is also supported:
 
-- `@oh-my-pi/omp-stats`
-- `@oh-my-pi/pi-tui`
-- `@oh-my-pi/pi-utils`
-
-The application is installed under:
-
-```text
-~/.local/share/omp-top
+```bash
+npx --yes omp-top@latest install
 ```
 
-and the launcher is created at:
+The persistent launcher is installed to:
 
 ```text
 ~/.local/bin/omp-top
 ```
 
-If `~/.local/bin` is not already in your `PATH`:
+and runtime files to:
+
+```text
+~/.local/share/omp-top
+```
+
+If `~/.local/bin` is not in your PATH:
 
 ```bash
 echo 'export PATH="$HOME/.local/bin:$PATH"' >> ~/.zshrc
 source ~/.zshrc
 ```
 
-## Usage
+## Install from GitHub source
+
+```bash
+git clone https://github.com/nqt9002/omp-top.git
+cd omp-top
+./install.sh
+```
+
+No dependency install step is required.
+
+## Run
 
 ```bash
 omp-top
 ```
 
-At startup, `omp-top` shows the last-known quota immediately where available, refreshes stats, and starts a background quota refresh.
-
-### Keyboard controls
+### Keys
 
 | Key | Action |
 | --- | --- |
-| `r` | Refresh stats and start quota refresh if one is not already running |
+| `r` | Refresh stats; start quota refresh if none is already running |
 | `↑` / `↓` | Scroll |
 | `j` / `k` | Scroll |
 | `PgUp` / `PgDn` | Page scroll |
-| `Home` / `End` | Jump to top/bottom |
+| `Home` / `End` | Top/bottom |
 | `q` / `Esc` | Exit |
 | `Ctrl+D` / `Ctrl+C` | Exit |
 
-## Cache metrics
+## Upgrade omp-top
 
-`omp-top` shows cache at three levels.
+The preferred upgrade path is now one command:
 
-### Overall
-
-Aggregate request and cache statistics across OMP sessions.
-
-### By provider
-
-Provider-level totals are computed from summed token counters rather than averaging model percentages. The cache-hit definition matches OMP:
-
-```text
-cache read / (uncached input + cache read)
+```bash
+omp-top upgrade
 ```
 
-### By model
+`omp-top upgrade` resolves the current npm `latest` dist-tag, then asks Bun to install that **exact version**. This avoids relying on Bun's cached `latest` manifest.
 
-Each exact model row includes request count, cache hit rate, cache-read tokens, cache-write tokens, and cache savings. This makes it easy to compare, for example, Codex, Claude, Gemini, and DeepSeek workloads individually.
+Preview channel:
 
-## Progressive quota refresh
-
-Quota is intentionally not treated as one blocking batch.
-
-Example lifecycle:
-
-```text
-OpenAI Codex       ✓ fresh
-Google Antigravity ✓ fresh
-Anthropic          ↻ refreshing · showing previous snapshot
+```bash
+omp-top upgrade --beta
 ```
 
-When Anthropic finishes, only that section changes to fresh. Existing quota is not deleted simply because a refresh is slow or temporarily fails.
+or any npm dist-tag:
 
-OMP itself controls credentials, OAuth refresh, provider retries, and usage caching. `omp-top` only renders the normalized/resulting data.
+```bash
+omp-top upgrade --tag next
+```
+
+You can also run the package runner directly:
+
+```bash
+bunx omp-top@latest install
+```
+
+or:
+
+```bash
+npx --yes omp-top@latest install
+```
+
+## OMP upgrades
+
+Upgrade OMP normally. You do **not** need to rerun the `omp-top` installer afterward.
+
+```text
+OMP 18.3.x → 18.4.x → 19.x
+                     │
+                     └─ omp-top remains installed
+```
+
+`omp-top` uses OMP's user-facing JSON commands rather than matching OMP's internal package version.
 
 ## Profiles
 
-Use a specific OMP profile:
-
 ```bash
-omp-top --profile my-profile
+omp-top --profile work
 ```
 
-The profile is applied before OMP stats modules are loaded and is inherited by the background `omp usage` process.
+This sets `OMP_PROFILE=work` for OMP subprocesses. `omp config path` is used to resolve the active profile's `agent.db` for progressive quota history.
 
 ## Redact account identities
 
@@ -144,77 +161,109 @@ The profile is applied before OMP stats modules are loaded and is inherited by t
 omp-top --redact
 ```
 
-This masks account identity fields in the quota display.
-
 ## Optional hard quota timeout
 
-By default v0.3 does not impose a short global timeout over OMP's quota batch because individual providers can legitimately take longer.
+By default, `omp-top` does not impose a short global timeout over `omp usage`; individual provider usage endpoints can legitimately be slow.
 
-If you explicitly want a hard cap:
+To impose a hard cap:
 
 ```bash
 omp-top --quota-timeout 30000
 ```
 
-or:
+`0` means no extra hard cap.
+
+## How stats work
+
+`omp-top` runs:
 
 ```bash
-OMP_TOP_QUOTA_HARD_TIMEOUT_MS=30000 omp-top
+omp stats --json
 ```
 
-`0` means no extra `omp-top` hard cap.
+OMP itself performs the incremental session sync before returning dashboard JSON. `omp-top` consumes the `overall` and `byModel` data from that public CLI output.
 
-## After updating OMP
+Provider cache hit rate is calculated from summed token counters rather than averaging model percentages:
 
-`omp-top` deliberately pins its OMP library dependencies to the installed OMP version. After upgrading OMP, rerun:
+```text
+cache read / (uncached input + cache read)
+```
+
+## How progressive quota works
+
+A single background command is started:
 
 ```bash
-~/.local/share/omp-top/install.sh
+omp usage --json
 ```
 
-## Custom OMP binary
+OMP records successful usage snapshots into its `usage_history` table as providers/accounts finish. While the batch command is still running, `omp-top` opens the active profile's `agent.db` **read-only** with `bun:sqlite` and checks for new snapshots.
 
-```bash
-OMP_TOP_OMP_BIN=/path/to/omp ./install.sh
+```text
+omp usage --json
+   ├─ Codex completes  ──> usage_history ──> render now
+   ├─ Gemini completes ──> usage_history ──> render now
+   └─ Claude completes later ──────────────> render later
 ```
 
-If automatic version detection fails:
+No extra provider requests are generated by this polling; it only reads local SQLite state.
 
-```bash
-OMP_TOP_OMP_VERSION=18.3.1 ./install.sh
-```
+If the table/schema is unavailable (or an auth broker does not maintain local history), `omp-top` simply waits for the final normalized JSON from `omp usage --json`.
 
-Use the version actually installed on your machine.
+## Security model
+
+- Provider credentials remain owned by OMP.
+- `omp-top` does not implement OAuth/token refresh.
+- The OMP database is opened read-only for progressive quota history.
+- No localhost HTTP server is exposed.
+- No arbitrary shell command UI is provided.
+- Upgrade downloads only the published `omp-top` npm package through Bun's package runner.
 
 ## Uninstall
 
 ```bash
-~/.local/share/omp-top/uninstall.sh
+omp-top uninstall
 ```
 
-## Security model
+or from a source checkout:
 
-`omp-top` is intended to remain a small monitoring surface:
-
-- it does not maintain a separate provider credential store;
-- it does not implement OAuth flows;
-- it does not expose a localhost HTTP server;
-- it does not provide a shell/terminal execution UI;
-- quota fetching is delegated to the installed OMP runtime;
-- usage history is read through OMP's stats APIs.
+```bash
+./uninstall.sh
+```
 
 ## Development
 
+There are no npm dependencies.
+
 ```bash
-bun install
-bun test
-bun run start
+bun test/run.mjs
+bun src/main.mjs
 ```
 
-The package versions used for development should match the OMP version being tested.
+The test suite also runs under Node for the non-Bun-specific compatibility logic:
+
+```bash
+node test/run.mjs
+```
+
+## Publishing
+
+The repo contains:
+
+- `.github/workflows/ci.yml` — Bun tests on pushes and pull requests.
+- `.github/workflows/publish.yml` — publishes tags matching `v*` to npm.
+
+To enable npm publishing, add a GitHub Actions secret named `NPM_TOKEN`, bump `package.json` to the release version, commit it, then push the matching tag. Example for v0.4.0:
+
+```bash
+git tag v0.4.0
+git push origin v0.4.0
+```
+
+The workflow verifies that the tag and package version match before publishing.
 
 ## Status
 
-Current release: **v0.3.0**.
+Current source release: **v0.4.0**.
 
-This is an independent utility built around Oh My Pi's public package/API surface; it is not an official OMP project.
+`omp-top` is an independent utility built around OMP's CLI contracts. It is not an official Oh My Pi project.
