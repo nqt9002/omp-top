@@ -253,17 +253,17 @@ The repo contains:
 - `.github/workflows/ci.yml` — Bun tests on pushes and pull requests.
 - `.github/workflows/publish.yml` — publishes tags matching `v*` to npm.
 
-To enable npm publishing, add a GitHub Actions secret named `NPM_TOKEN`, bump `package.json` to the release version, commit it, then push the matching tag. Example for v0.4.0:
+To enable npm publishing, add a GitHub Actions secret named `NPM_TOKEN`, bump `package.json` to the release version, commit it, then push the matching tag. Example for v0.4.1:
 
 ```bash
-git tag v0.4.0
-git push origin v0.4.0
+git tag v0.4.1
+git push origin v0.4.1
 ```
 
 The workflow verifies that the tag and package version match before publishing.
 
 ## Status
 
-Current source release: **v0.4.0**.
+Current source release: **v0.4.1**.
 
 `omp-top` is an independent utility built around OMP's CLI contracts. It is not an official Oh My Pi project.

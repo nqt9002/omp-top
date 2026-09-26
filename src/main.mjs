@@ -1,5 +1,4 @@
 #!/usr/bin/env bun
-import { OmpTopApp } from "./top.mjs";
 import { installSelf, uninstallSelf, upgradeSelf, readPackageVersion } from "./self.mjs";
 
 function parse(argv) {
@@ -84,6 +83,7 @@ if (!process.stdin?.isTTY || !process.stdout?.isTTY) {
   process.exit(1);
 }
 
+const { OmpTopApp } = await import("./top.mjs");
 const app = new OmpTopApp({ redact: options.redact });
 const cleanup = () => app.dispose();
 process.once("exit", cleanup);

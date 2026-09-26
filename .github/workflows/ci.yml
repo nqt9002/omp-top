@@ -13,4 +13,6 @@ jobs:
       - uses: oven-sh/setup-bun@v2
         with:
           bun-version: latest
+      - name: Parse/build every runtime module
+        run: bun build src/main.mjs src/top.mjs src/quota.mjs src/omp.mjs src/tui.mjs src/self.mjs src/stats.mjs src/json.mjs src/format.mjs --target=bun --outdir=/tmp/omp-top-build
       - run: bun test/run.mjs

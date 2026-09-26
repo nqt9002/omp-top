@@ -19,7 +19,26 @@ async function copyIfExists(source, target, options) {
   try { await fs.cp(source, target, options); } catch (error) { if (error?.code !== "ENOENT") throw error; }
 }
 
+
+async function validateSource(root) {
+  if (!globalThis.Bun?.build) return;
+  const srcDir = path.join(root, "src");
+  const names = (await fs.readdir(srcDir)).filter(name => name.endsWith(".mjs"));
+  const entrypoints = names.map(name => path.join(srcDir, name));
+  const result = await Bun.build({
+    entrypoints,
+    target: "bun",
+    write: false,
+    minify: false,
+  });
+  if (!result.success) {
+    const details = result.logs?.map(log => String(log)).join("\n") || "unknown parse/build error";
+    throw new Error(`Source validation failed:\n${details}`);
+  }
+}
+
 export async function installSelf({ sourceRoot = packageRoot } = {}) {
+  await validateSource(sourceRoot);
   const installDir = process.env.OMP_TOP_HOME?.trim() || defaultInstallDir;
   const binDir = process.env.OMP_TOP_BIN_DIR?.trim() || defaultBinDir;
   const temp = `${installDir}.tmp-${process.pid}`;

@@ -243,14 +243,14 @@ export class OmpTopApp {
     const quotaTime = formatClock(this.#snapshot.quotaUpdatedAt);
     const left = ` ${style.bold("omp top")}${process.env.OMP_PROFILE ? style.dim(` · profile ${process.env.OMP_PROFILE}`) : ""}`;
     const active = [this.#statsRefreshing ? "stats" : "", this.#quotaRefreshing ? "quota" : ""].filter(Boolean);
-    const right = active.length ? style.yellow(`refreshing ${active.join("+")}… ) : style.dim(`stats ${statsTime} · quota ${quotaTime}`);
+    const right = active.length ? style.yellow(`refreshing ${active.join("+")}…`) : style.dim(`stats ${statsTime} · quota ${quotaTime}`);
     const pad = Math.max(1, width - visibleWidth(left) - visibleWidth(right));
     const header = truncateAnsi(`${left}${" ".repeat(pad)}${right}`, width);
 
     const body = ["", ...renderStats(this.#snapshot.stats), "", ...renderQuota(this.#snapshot.quota, width, this.#states, this.#quotaRefreshing), ""];
     const footer = [
       truncateAnsi(` ${Date.now() - this.#statusAt < STATUS_TTL_MS ? this.#status : ""}`, width),
-      truncateAnsi(style.dim(" r refresh · ↑↉/j/k scroll · PgUp/PgDn · Home/End · q/Esc/Ctrl+D/Ctrl+C exit"), width),
+      truncateAnsi(style.dim(" r refresh · ↑/↓/j/k scroll · PgUp/PgDn · Home/End · q/Esc/Ctrl+D/Ctrl+C exit"), width),
     ];
     const bodyHeight = Math.max(1, height - 1 - footer.length);
     const maxOffset = Math.max(0, body.length - bodyHeight);
