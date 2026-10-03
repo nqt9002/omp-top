@@ -30,7 +30,7 @@ ${t("cli.language")}:
   omp-top language     ${t("cli.languageHelp")}
   omp-top language en
   omp-top language vi
-  OMP_TOP_LANG=en|vi  one-process override
+  OMP_TOP_LANG=en|vi  ${t("cli.langOverride")}
 
 ${t("cli.monitor")}:
   --profile NAME       ${t("cli.profile")}
