@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { extractJsonPayload, parseNoisyJson } from "../src/json.mjs";
 import { aggregateCacheByProvider } from "../src/stats.mjs";
-import { snapshotsToQuota, mergeProviderReports } from "../src/quota.mjs";
+import { snapshotsToQuota, mergeProviderReports, quotaDisplayGroups } from "../src/quota.mjs";
 import { versionFromReleaseTag, releaseAssetNames, parseSha256 } from "../src/self.mjs";
 import { OmpTopApp } from "../src/top.mjs";
 
@@ -136,4 +136,44 @@ await test("wide terminal keeps header metadata inside logical dashboard width",
   const header = app.render(240, 28)[0].replace(/\x1b\[[0-9;]*m/g, "");
   assert.ok(header.length <= 112);
   app.dispose();
+});
+
+await test("Antigravity display groups expose Gemini and shared Claude/GPT quota", () => {
+  const report = {
+    provider: "google-antigravity",
+    limits: [
+      { id: "google-antigravity:google:default:gemini-weekly", label: "Gemini", scope: { windowId: "weekly" }, window: { id: "weekly", label: "Weekly" }, amount: { usedFraction: 0.34 } },
+      { id: "google-antigravity:google:default:gemini-5h", label: "Gemini", scope: { windowId: "5h" }, window: { id: "5h", label: "5 Hour" }, amount: { usedFraction: 0 } },
+      { id: "google-antigravity:anthropic:default:3p-weekly", label: "Claude & GPT (shared)", scope: { windowId: "weekly", shared: true, sharedGroup: "3p-weekly:weekly" }, window: { id: "weekly", label: "Weekly" }, amount: { usedFraction: 0.17 } },
+      { id: "google-antigravity:openai:default:3p-weekly", label: "Claude & GPT (shared)", scope: { windowId: "weekly", shared: true, sharedGroup: "3p-weekly:weekly" }, window: { id: "weekly", label: "Weekly" }, amount: { usedFraction: 0.17 } },
+      { id: "google-antigravity:anthropic:default:3p-5h", label: "Claude & GPT (shared)", scope: { windowId: "5h", shared: true, sharedGroup: "3p-5h:5h" }, window: { id: "5h", label: "5 Hour" }, amount: { usedFraction: 0 } },
+      { id: "google-antigravity:openai:default:3p-5h", label: "Claude & GPT (shared)", scope: { windowId: "5h", shared: true, sharedGroup: "3p-5h:5h" }, window: { id: "5h", label: "5 Hour" }, amount: { usedFraction: 0 } },
+    ],
+  };
+  const groups = quotaDisplayGroups(report);
+  assert.deepEqual(groups.map(group => [group.label, group.limits.length]), [
+    ["Gemini", 2],
+    ["Claude & GPT (shared)", 2],
+  ]);
+  assert.deepEqual(groups[0].limits.map(limit => limit.window.label), ["Weekly", "5 Hour"]);
+  assert.deepEqual(groups[1].limits.map(limit => limit.window.label), ["Weekly", "5 Hour"]);
+});
+
+await test("Antigravity progressive history dedupes shared routing copies by label and window", () => {
+  const rows = [
+    { recordedAt: 1000, provider: "google-antigravity", accountKey: "a", email: "a@test", accountId: "a", limitId: "google-antigravity:google:default:gemini-weekly", label: "Gemini", windowLabel: "Weekly", usedFraction: 0.34, status: "ok", resetsAt: 5000 },
+    { recordedAt: 1000, provider: "google-antigravity", accountKey: "a", email: "a@test", accountId: "a", limitId: "google-antigravity:google:default:gemini-5h", label: "Gemini", windowLabel: "5 Hour", usedFraction: 0, status: "ok", resetsAt: 5000 },
+    { recordedAt: 1000, provider: "google-antigravity", accountKey: "a", email: "a@test", accountId: "a", limitId: "google-antigravity:anthropic:default:3p-weekly", label: "Claude & GPT (shared)", windowLabel: "Weekly", usedFraction: 0.12, status: "ok", resetsAt: 5000 },
+    { recordedAt: 1000, provider: "google-antigravity", accountKey: "a", email: "a@test", accountId: "a", limitId: "google-antigravity:openai:default:3p-weekly", label: "Claude & GPT (shared)", windowLabel: "Weekly", usedFraction: 0.17, status: "ok", resetsAt: 5000 },
+    { recordedAt: 1000, provider: "google-antigravity", accountKey: "a", email: "a@test", accountId: "a", limitId: "google-antigravity:anthropic:default:3p-5h", label: "Claude & GPT (shared)", windowLabel: "5 Hour", usedFraction: 0, status: "ok", resetsAt: 5000 },
+    { recordedAt: 1000, provider: "google-antigravity", accountKey: "a", email: "a@test", accountId: "a", limitId: "google-antigravity:openai:default:3p-5h", label: "Claude & GPT (shared)", windowLabel: "5 Hour", usedFraction: 0, status: "ok", resetsAt: 5000 },
+  ];
+  const payload = snapshotsToQuota(rows);
+  const groups = quotaDisplayGroups(payload.reports[0]);
+  assert.deepEqual(groups.map(group => [group.label, group.limits.length]), [
+    ["Gemini", 2],
+    ["Claude & GPT (shared)", 2],
+  ]);
+  const weekly = groups[1].limits.find(limit => limit.window.label === "Weekly");
+  assert.equal(weekly.amount.usedFraction, 0.17);
 });

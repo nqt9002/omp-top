@@ -1,7 +1,7 @@
 import { TerminalUI, Keys } from "./tui.mjs";
 import { fetchStats } from "./omp.mjs";
 import { normalizeStats, aggregateCacheByProvider, sortModels } from "./stats.mjs";
-import { loadHistoricalQuota, mergeProviderReports, ProgressiveQuotaRefresh } from "./quota.mjs";
+import { loadHistoricalQuota, mergeProviderReports, ProgressiveQuotaRefresh, quotaDisplayGroups } from "./quota.mjs";
 import {
   style, compactNumber, percent, providerLabel, usedFraction, quotaColor, cacheColor,
   progressBar, formatReset, formatClock, formatAge, visibleWidth, truncateAnsi,
@@ -131,16 +131,25 @@ function renderQuota(quota, width, providerStates, refreshing) {
       const identity = accountLabel(report, providerReports.length > 1 ? `Account ${index + 1}` : "Account");
       const plan = planLabel(report);
       lines.push(`    ${style.cyan(identity)}${plan ? style.dim(` · ${plan}`) : ""}`);
-      const limits = report.limits ?? [];
-      if (!limits.length) { lines.push(style.dim("    no quota windows reported")); return; }
-      for (const limit of limits) {
-        const fraction = usedFraction(limit.amount ?? {});
-        const label = String(limit.window?.label || limit.label || limit.id || "limit").slice(0, 22).padEnd(22);
-        const barWidth = Math.max(6, Math.min(18, width - 50));
-        const bar = progressBar(fraction, barWidth);
-        const pct = percent(fraction).padStart(6);
-        const reset = formatReset(limit.window?.resetsAt).padStart(13);
-        lines.push(`      ${label} ${bar} ${quotaColor(fraction, pct)} ${reset}`.trimEnd());
+      const groups = quotaDisplayGroups(report);
+      const hasLimits = groups.some(group => group.limits.length > 0);
+      if (!hasLimits) { lines.push(style.dim("      no quota windows reported")); return; }
+
+      const groupedAntigravity = report.provider === "google-antigravity" && groups.some(group => group.label);
+      for (const group of groups) {
+        if (groupedAntigravity && group.label) lines.push(`      ${style.bold(group.label)}`);
+        for (const limit of group.limits) {
+          const fraction = usedFraction(limit.amount ?? {});
+          const windowLabel = String(limit.window?.label || limit.scope?.windowId || limit.id || "limit");
+          const labelWidth = groupedAntigravity ? 20 : 22;
+          const label = windowLabel.slice(0, labelWidth).padEnd(labelWidth);
+          const barWidth = Math.max(6, Math.min(18, width - (groupedAntigravity ? 52 : 50)));
+          const bar = progressBar(fraction, barWidth);
+          const pct = percent(fraction).padStart(6);
+          const reset = formatReset(limit.window?.resetsAt).padStart(13);
+          const indent = groupedAntigravity ? "        " : "      ";
+          lines.push(`${indent}${label} ${bar} ${quotaColor(fraction, pct)} ${reset}`.trimEnd());
+        }
       }
     });
   }
