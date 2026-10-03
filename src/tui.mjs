@@ -61,7 +61,10 @@ export class TerminalUI {
   #handleData(data) {
     if (!this.#started) return;
     const value = String(data);
-    const known = ["\x1b[5~", "\x1b[6~", "\x1b[A", "\x1b[B", "\x1b[H", "\x1b[F", "\x1b[1~", "\x1b[4~", "\x03", "\x04", "\x1b"];
+    const known = [
+      "\x1b[5~", "\x1b[6~", "\x1b[A", "\x1b[B", "\x1b[C", "\x1b[D", "\x1b[Z",
+      "\x1b[H", "\x1b[F", "\x1b[1~", "\x1b[4~", "\x03", "\x04", "\x1b", "\t",
+    ];
     if (known.includes(value)) { this.#input(value); return; }
     for (const ch of value) this.#input(ch);
   }
@@ -71,8 +74,12 @@ export const Keys = {
   ctrlC: "\x03",
   ctrlD: "\x04",
   escape: "\x1b",
+  tab: "\t",
+  shiftTab: "\x1b[Z",
   up: "\x1b[A",
   down: "\x1b[B",
+  right: "\x1b[C",
+  left: "\x1b[D",
   pageUp: "\x1b[5~",
   pageDown: "\x1b[6~",
   home: new Set(["\x1b[H", "\x1b[1~"]),
