@@ -2,63 +2,93 @@
 import { installSelf, uninstallSelf, upgradeSelf, readPackageVersion } from './self.mjs';
 import { parseOptions, upgradeSelection } from './upgrade-options.mjs';
 import { versionChannel } from './release-policy.mjs';
+import { getLocale, localeLabel, setLocale, t } from './i18n.mjs';
+import { resolveLocale, writeLanguage } from './preferences.mjs';
+
+setLocale(await resolveLocale());
 
 function help() {
-  return `omp-top - terminal monitor for OMP stats/cache/quota
+  return `omp-top - ${t("cli.description")}
 
-Usage:
+${t("cli.usage")}:
   omp-top [run] [--profile NAME] [--redact] [--quota-timeout MS]
   omp-top install
   omp-top upgrade [--channel stable|beta | --tag vX.Y.Z[-beta.N]]
+  omp-top language [en|vi]
   omp-top uninstall
 
-Upgrade:
-  --channel stable     Latest stable GitHub Release (default)
-  --channel beta       Latest published beta.N GitHub prerelease
-  --tag TAG            Exact published version; permits intentional rollback
+${t("cli.upgrade")}:
+  --channel stable     ${t("cli.channelStable")}
+  --channel beta       ${t("cli.channelBeta")}
+  --tag TAG            ${t("cli.tag")}
 
-Channel choice applies to this command only; beta is never a silent opt-in.
-To return from a newer beta to an older stable: upgrade --channel stable.
-No npm, npx or bunx is used. The installed OMP version is independent.
+${t("cli.channelNote")}
+${t("cli.returnStable")}
+${t("cli.independence")}
 
-Monitor:
-  --profile NAME       Use a named OMP profile
-  --redact             Mask account identities
-  --quota-timeout MS   Optional quota hard cap; 0 = none
-  -v, --version        Installed version and channel
-  -h, --help           Show help
+${t("cli.language")}:
+  omp-top language     ${t("cli.languageHelp")}
+  omp-top language en
+  omp-top language vi
+  OMP_TOP_LANG=en|vi  one-process override
 
-Keys: 1-6/Tab/Shift+Tab switch views; left/right views; r refresh; arrows/j/k scroll; PgUp/PgDn; Home/End; q/Esc/Ctrl+C/Ctrl+D exit
+${t("cli.monitor")}:
+  --profile NAME       ${t("cli.profile")}
+  --redact             ${t("cli.redact")}
+  --quota-timeout MS   ${t("cli.quotaTimeout")}
+  -v, --version        ${t("cli.version")}
+  -h, --help           ${t("cli.help")}
+
+${t("cli.keys")}
 `;
 }
 
 let options;
 try { options = parseOptions(process.argv.slice(2)); }
 catch (error) { process.stderr.write(`${error.message}\n\n${help()}`); process.exit(2); }
+
+if (options.command === 'language') {
+  try {
+    if (options.language) {
+      const saved = await writeLanguage(options.language);
+      setLocale(saved.locale);
+      process.stdout.write(t("language.changed", { language: localeLabel(saved.locale), locale: saved.locale }) + "\n");
+    } else {
+      const locale = getLocale();
+      process.stdout.write(t("language.current", { language: localeLabel(locale), locale }) + "\n");
+      process.stdout.write(t("language.supported") + "\n");
+    }
+    process.exit(0);
+  } catch (error) {
+    process.stderr.write(t("language.invalid", { locale: options.language ?? "" }) + "\n");
+    process.exit(2);
+  }
+}
+
 if (options.help) { process.stdout.write(help()); process.exit(0); }
 if (options.version) {
   const version = await readPackageVersion();
-  process.stdout.write(`omp-top ${version}\nchannel: ${versionChannel(version)}\n`);
+  process.stdout.write(`omp-top ${version}\nchannel: ${versionChannel(version)}\nlanguage: ${getLocale()}\n`);
   process.exit(0);
 }
 
 try {
   if (options.command === 'install') {
     const installed = await installSelf();
-    process.stdout.write(`Installed omp-top ${installed.version} (${versionChannel(installed.version)})\n${installed.launcherPath}\n`);
+    process.stdout.write(t("cli.installed", { version: installed.version, channel: versionChannel(installed.version) }) + "\n" + installed.launcherPath + "\n");
     if (!String(process.env.PATH || '').split(':').includes(installed.launcherPath.replace(/\/omp-top$/, ''))) {
-      process.stdout.write('\nAdd ~/.local/bin to PATH: export PATH="$HOME/.local/bin:$PATH"\n');
+      process.stdout.write("\n" + t("cli.addPath") + "\n");
     }
     process.exit(0);
   }
   if (options.command === 'uninstall') {
     const result = await uninstallSelf();
-    process.stdout.write(`Removed omp-top from ${result.installDir}\n`);
+    process.stdout.write(t("cli.removed", { path: result.installDir }) + "\n");
     process.exit(0);
   }
   if (options.command === 'upgrade') {
     const selection = upgradeSelection(options);
-    process.stdout.write(`Checking GitHub Releases (${selection.tag || selection.channel})…\n`);
+    process.stdout.write(t("cli.checking", { target: selection.tag || selection.channel }) + "\n");
     await upgradeSelf(options);
     process.exit(0);
   }
@@ -67,7 +97,7 @@ try {
 if (options.profile?.trim()) process.env.OMP_PROFILE = options.profile.trim();
 if (options.quotaTimeout !== undefined) process.env.OMP_TOP_QUOTA_HARD_TIMEOUT_MS = options.quotaTimeout;
 if (!process.stdin?.isTTY || !process.stdout?.isTTY) {
-  process.stderr.write('omp-top monitor requires an interactive TTY.\n'); process.exit(1);
+  process.stderr.write(t("cli.ttyRequired") + "\n"); process.exit(1);
 }
 const version = await readPackageVersion();
 const { OmpTopApp } = await import('./top.mjs');
