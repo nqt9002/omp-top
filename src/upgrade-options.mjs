@@ -1,0 +1,59 @@
+import { compareVersions, parseVersion, versionChannel } from './release-policy.mjs';
+
+/** Channel selection is per invocation; there is no hidden/sticky beta opt-in. */
+export function upgradeSelection({ channel, tag, prerelease = false } = {}) {
+  if (channel !== undefined && !['stable', 'beta'].includes(channel)) throw new Error('--channel must be stable or beta');
+  if (tag !== undefined && (channel !== undefined || prerelease)) throw new Error('Use --tag OR --channel/--beta, not both');
+  if (prerelease && channel !== undefined) throw new Error('Use --beta OR --channel, not both');
+  if (tag !== undefined) {
+    const version = parseVersion(tag).version;
+    return { tag: `v${version}`, channel: versionChannel(version), explicit: true };
+  }
+  return { tag: undefined, channel: channel ?? (prerelease ? 'beta' : 'stable'), explicit: channel !== undefined || prerelease };
+}
+
+export function upgradeDecision(current, target, selection) {
+  const order = compareVersions(target, current);
+  if (order === 0) return { update: false, message: `omp-top ${current} is already up to date.` };
+  if (order > 0 || selection.tag) return { update: true };
+  if (selection.channel === 'stable' && versionChannel(current) !== 'stable') {
+    if (selection.explicit) return { update: true, switching: true };
+    return { update: false, message: `Stable ${target} is older than installed ${current}. To leave beta explicitly, run: omp-top upgrade --channel stable` };
+  }
+  return { update: false, message: `Installed ${current} is newer than ${selection.channel} ${target}; no downgrade. Use --tag for an intentional rollback.` };
+}
+
+export function parseOptions(argv) {
+  const result = { command: 'run', redact: false, profile: undefined, quotaTimeout: undefined, channel: undefined, tag: undefined, prerelease: false, help: false, version: false };
+  let commandSet = false;
+  const seen = new Set();
+  const once = name => { if (seen.has(name)) throw new Error(`Duplicate option: ${name}`); seen.add(name); };
+  const valueAt = (i, name) => {
+    const value = argv[i + 1];
+    if (!value || value.startsWith('-')) throw new Error(`${name} requires a value`);
+    return value;
+  };
+  for (let i = 0; i < argv.length; i++) {
+    const arg = argv[i];
+    if (['run', 'install', 'upgrade', 'uninstall'].includes(arg)) {
+      if (commandSet) throw new Error('Choose one command');
+      result.command = arg; commandSet = true; continue;
+    }
+    if (arg === '--redact') { result.redact = true; continue; }
+    if (arg === '--profile') { once(arg); result.profile = valueAt(i++, arg); continue; }
+    if (arg === '--quota-timeout') {
+      once(arg); result.quotaTimeout = valueAt(i++, arg);
+      if (!/^\d+$/.test(result.quotaTimeout) || !Number.isSafeInteger(Number(result.quotaTimeout))) throw new Error('--quota-timeout must be a non-negative integer in milliseconds');
+      continue;
+    }
+    if (arg === '--channel') { once(arg); result.channel = valueAt(i++, arg); continue; }
+    if (arg === '--tag') { once(arg); result.tag = valueAt(i++, arg); continue; }
+    if (arg === '--beta') { once(arg); result.prerelease = true; continue; }
+    if (arg === '-h' || arg === '--help') { result.help = true; continue; }
+    if (arg === '-v' || arg === '--version') { result.version = true; continue; }
+    throw new Error(`Unknown argument: ${arg}`);
+  }
+  upgradeSelection(result); // Validate before any network or filesystem mutation.
+  if (result.command !== 'upgrade' && (result.channel !== undefined || result.tag !== undefined || result.prerelease)) throw new Error('--channel, --tag and --beta are upgrade options');
+  return result;
+}
