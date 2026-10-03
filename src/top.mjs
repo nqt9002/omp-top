@@ -2,11 +2,13 @@ import { TerminalUI, Keys } from "./tui.mjs";
 import { fetchStats } from "./omp.mjs";
 import { normalizeStats } from "./stats.mjs";
 import { loadHistoricalQuota, mergeProviderReports, ProgressiveQuotaRefresh } from "./quota.mjs";
-import { style, providerLabel, formatClock, visibleWidth, truncateAnsi } from "./format.mjs";
+import { style, providerLabel, formatClock } from "./format.mjs";
+import {
+  composeSides, frameBottom, frameDivider, frameRow, frameTop, offsetLine, workspaceGeometry,
+} from "./layout.mjs";
 import { VIEWS, directViewIndex, nextViewIndex, renderView, renderViewTabs } from "./views.mjs";
 
 const STATUS_TTL_MS = 8000;
-const DASHBOARD_MAX_WIDTH = 112;
 const MAX_EVENTS = 60;
 
 export class OmpTopApp {
@@ -183,8 +185,8 @@ export class OmpTopApp {
     if (data === Keys.shiftTab || data === Keys.left) { this.#switchView(nextViewIndex(this.#viewIndex, -1)); return; }
     if (data === "j" || data === Keys.down) this.#scroll += 1;
     else if (data === "k" || data === Keys.up) this.#scroll = Math.max(0, this.#scroll - 1);
-    else if (data === Keys.pageDown) this.#scroll += Math.max(1, this.#ui.rows - 6);
-    else if (data === Keys.pageUp) this.#scroll = Math.max(0, this.#scroll - Math.max(1, this.#ui.rows - 6));
+    else if (data === Keys.pageDown) this.#scroll += Math.max(1, this.#ui.rows - 7);
+    else if (data === Keys.pageUp) this.#scroll = Math.max(0, this.#scroll - Math.max(1, this.#ui.rows - 7));
     else if (Keys.home.has(data)) this.#scroll = 0;
     else if (Keys.end.has(data)) this.#scroll = Number.MAX_SAFE_INTEGER;
     else return;
@@ -192,18 +194,20 @@ export class OmpTopApp {
   }
 
   render(width, height) {
-    const dashboardWidth = Math.max(40, Math.min(width, DASHBOARD_MAX_WIDTH));
+    const workspace = workspaceGeometry(width);
     const statsTime = formatClock(this.#snapshot.statsUpdatedAt);
     const quotaTime = formatClock(this.#snapshot.quotaUpdatedAt);
     const identity = [style.bold("OMP TOP")];
     if (this.#version) identity.push(`v${this.#version}`);
     if (this.#channel) identity.push(this.#channel);
     if (process.env.OMP_PROFILE) identity.push(`profile ${process.env.OMP_PROFILE}`);
-    const left = ` ${identity.join(style.dim(" · "))}`;
-    const right = style.dim(`stats ${statsTime} · quota ${quotaTime}`);
-    const pad = Math.max(2, dashboardWidth - visibleWidth(left) - visibleWidth(right));
-    const header = truncateAnsi(`${left}${" ".repeat(pad)}${right}`, dashboardWidth);
-    const tabs = renderViewTabs(this.#viewIndex, dashboardWidth);
+    const title = identity.join(style.dim(" · "));
+
+    const freshness = workspace.innerWidth >= 120
+      ? style.dim(`stats ${statsTime} · quota ${quotaTime}`)
+      : "";
+    const tabs = renderViewTabs(this.#viewIndex, workspace.innerWidth);
+    const navLine = composeSides(tabs, freshness, workspace.innerWidth);
 
     const statsState = {
       refreshing: this.#statsRefreshing,
@@ -212,25 +216,43 @@ export class OmpTopApp {
       error: this.#statsError,
     };
     const view = VIEWS[this.#viewIndex] ?? VIEWS[0];
-    const body = ["", ...renderView(view.id, {
+    const body = renderView(view.id, {
       stats: this.#snapshot.stats,
       statsState,
       quota: this.#snapshot.quota,
       providerStates: this.#states,
       quotaRefreshing: this.#quotaRefreshing,
       events: this.#events,
-    }, dashboardWidth), ""];
-    const footer = [
-      truncateAnsi(style.dim("─".repeat(Math.max(1, dashboardWidth))), dashboardWidth),
-      truncateAnsi(` ${Date.now() - this.#statusAt < STATUS_TTL_MS ? this.#status : ""}`, dashboardWidth),
-      truncateAnsi(style.dim(" 1-6/Tab views · Shift+Tab/← previous · r refresh · ↑/↓/j/k scroll · PgUp/PgDn · q/Esc exit"), dashboardWidth),
-    ];
-    const bodyHeight = Math.max(1, height - 2 - footer.length);
+    }, workspace.innerWidth);
+
+    const bodyHeight = Math.max(1, height - 7);
     const maxOffset = Math.max(0, body.length - bodyHeight);
     if (this.#scroll === Number.MAX_SAFE_INTEGER) this.#scroll = maxOffset;
     this.#scroll = Math.max(0, Math.min(this.#scroll, maxOffset));
     const visible = body.slice(this.#scroll, this.#scroll + bodyHeight);
     while (visible.length < bodyHeight) visible.push("");
-    return [header, tabs, ...visible, ...footer];
+
+    const activeStatus = Date.now() - this.#statusAt < STATUS_TTL_MS && this.#status
+      ? this.#status
+      : style.dim(`${view.label} · ready`);
+    const scrollState = maxOffset > 0
+      ? style.dim(`scroll ${this.#scroll + 1}/${maxOffset + 1}`)
+      : style.dim("fit");
+    const statusLine = composeSides(activeStatus, scrollState, workspace.innerWidth);
+    const hints = workspace.mode === "compact"
+      ? "1–6 view · Tab switch · r refresh · ↑↓ scroll · q exit"
+      : "1–6 view · Tab/Shift+Tab/←→ switch · r refresh · ↑↓/j/k scroll · PgUp/PgDn · q/Esc exit";
+
+    const framed = [
+      frameTop(workspace.width, title),
+      frameRow(navLine, workspace.width),
+      frameDivider(workspace.width),
+      ...visible.map(line => frameRow(line, workspace.width)),
+      frameDivider(workspace.width),
+      frameRow(statusLine, workspace.width),
+      frameRow(style.dim(hints), workspace.width),
+      frameBottom(workspace.width),
+    ];
+    return framed.map(line => offsetLine(line, workspace.offset));
   }
 }
