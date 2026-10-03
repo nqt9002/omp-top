@@ -279,3 +279,65 @@ test("incomplete data does not render a false all-clear state", () => {
     setLocale(previous);
   }
 });
+
+
+test("high-impact cache alert catches a dominant 50% hit model that masks its provider average", () => {
+  const stats = normalizeStats({
+    overall: { cacheRate: 0.67, totalInputTokens: 81_000_000, totalCacheReadTokens: 165_000_000 },
+    byModel: [
+      { provider: "openai-codex", model: "gpt-6-astra", totalRequests: 1090, totalInputTokens: 72_500_000, totalCacheReadTokens: 73_300_000, totalCacheWriteTokens: 0, cacheRate: 0.503 },
+      { provider: "openai-codex", model: "gpt-6.1-sol", totalRequests: 50, totalInputTokens: 360_000, totalCacheReadTokens: 2_650_000, totalCacheWriteTokens: 0, cacheRate: 0.88 },
+      { provider: "google-antigravity", model: "gemini-3.8-flash", totalRequests: 680, totalInputTokens: 7_000_000, totalCacheReadTokens: 89_200_000, totalCacheWriteTokens: 0, cacheRate: 0.927 },
+    ],
+  });
+  const diagnostics = {
+    overall: { requests: 1820, uncachedInputTokens: 80_000_000, cacheReadTokens: 165_150_000, cacheWriteTokens: 0, cacheRate: 0.674 },
+    byModel: [
+      { provider: "openai-codex", model: "gpt-6-astra", requests: 1090, uncachedInputTokens: 72_500_000, cacheReadTokens: 73_300_000, cacheWriteTokens: 0, cacheRate: 0.503, uncachedShare: 0.90625 },
+      { provider: "openai-codex", model: "gpt-6.1-sol", requests: 50, uncachedInputTokens: 360_000, cacheReadTokens: 2_650_000, cacheWriteTokens: 0, cacheRate: 0.88, uncachedShare: 0.0045 },
+      { provider: "google-antigravity", model: "gemini-3.8-flash", requests: 680, uncachedInputTokens: 7_000_000, cacheReadTokens: 89_200_000, cacheWriteTokens: 0, cacheRate: 0.927, uncachedShare: 0.0875 },
+    ],
+    byAgentModel: [
+      { provider: "openai-codex", model: "gpt-6-astra", agentType: "main", requests: 700, uncachedInputTokens: 20_000_000, cacheReadTokens: 50_000_000 },
+      { provider: "openai-codex", model: "gpt-6-astra", agentType: "subagent", requests: 390, uncachedInputTokens: 52_500_000, cacheReadTokens: 23_300_000 },
+    ],
+    byFolderModel: [
+      { provider: "openai-codex", model: "gpt-6-astra", folder: "/work/artland", requests: 600, uncachedInputTokens: 45_000_000, cacheReadTokens: 20_000_000 },
+      { provider: "openai-codex", model: "gpt-6-astra", folder: "/work/other", requests: 490, uncachedInputTokens: 27_500_000, cacheReadTokens: 53_300_000 },
+    ],
+    bySessionModel: [
+      { provider: "openai-codex", model: "gpt-6-astra", folder: "/work/artland", sessionFile: "/work/artland/session-a.jsonl", requests: 300, uncachedInputTokens: 30_000_000, cacheReadTokens: 10_000_000 },
+    ],
+  };
+
+  const overview = buildOverviewIntelligence({ stats, cacheDiagnostics: diagnostics });
+  const alert = overview.alerts.find(item => item.kind === "cache-impact");
+  assert.ok(alert);
+  assert.equal(alert.model, "gpt-6-astra");
+  assert.equal(alert.severity, "warning");
+  assert.ok(alert.uncachedShare > 0.9);
+  assert.ok(alert.diagnosis.likely.some(item => item.kind === "agent-concentration"));
+  assert.ok(alert.diagnosis.likely.some(item => item.kind === "project-concentration"));
+});
+
+test("Vietnamese cache intelligence uses natural technical wording", () => {
+  const previous = getLocale();
+  try {
+    setLocale("vi");
+    const stats = normalizeStats({
+      overall: { cacheRate: 0.5, totalInputTokens: 20_000_000, totalCacheReadTokens: 20_000_000 },
+      byModel: [{ provider: "openai-codex", model: "gpt-6-astra", totalRequests: 100, totalInputTokens: 18_000_000, totalCacheReadTokens: 18_000_000, cacheRate: 0.5 }],
+    });
+    const diagnostics = {
+      overall: { uncachedInputTokens: 20_000_000, cacheReadTokens: 20_000_000, cacheRate: 0.5 },
+      byModel: [{ provider: "openai-codex", model: "gpt-6-astra", requests: 100, uncachedInputTokens: 18_000_000, cacheReadTokens: 18_000_000, cacheWriteTokens: 0, cacheRate: 0.5, uncachedShare: 0.9 }],
+      byAgentModel: [], byFolderModel: [], bySessionModel: [],
+    };
+    const screen = stripAnsi(renderView("overview", { stats, cacheDiagnostics: diagnostics, quota: { reports: [] }, events: [], statsState: {} }, 156).join("\n"));
+    assert.match(screen, /đang tạo lượng uncached input rất lớn/);
+    assert.match(screen, /Khuyến nghị:/);
+    assert.doesNotMatch(screen, /Quyết định:/);
+  } finally {
+    setLocale(previous);
+  }
+});
