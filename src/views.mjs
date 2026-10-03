@@ -130,16 +130,16 @@ function alertTitle(alert) {
     });
   }
   if (alert.kind === "model-failure") {
-    return t("overview.alert.modelFailure", { model: alert.model });
+    return t("overview.alert.modelFailure", { provider: providerLabel(alert.provider), model: alert.model });
   }
   if (alert.kind === "cache-low") {
-    return t("overview.alert.cacheLow", { model: alert.model, rate: percent(alert.cacheRate) });
+    return t("overview.alert.cacheLow", { provider: providerLabel(alert.provider), model: alert.model, rate: percent(alert.cacheRate) });
   }
   if (alert.kind === "slow-ttft") {
-    return t("overview.alert.slowTtft", { model: alert.model });
+    return t("overview.alert.slowTtft", { provider: providerLabel(alert.provider), model: alert.model });
   }
   if (alert.kind === "low-tps") {
-    return t("overview.alert.lowTps", { model: alert.model });
+    return t("overview.alert.lowTps", { provider: providerLabel(alert.provider), model: alert.model });
   }
   if (alert.kind === "agent-concentration") {
     return t("overview.alert.agentConcentration", { agent: alert.agentType, share: percent(alert.share) });
@@ -301,6 +301,7 @@ function renderReliability(intelligence, width) {
   } else {
     for (const row of intelligence.reliability.failures.slice(0, 3)) {
       const text = t("overview.model.failure", {
+        provider: providerLabel(row.provider),
         model: row.model,
         failed: row.failedRequests,
         total: row.totalRequests,
