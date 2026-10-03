@@ -8,6 +8,7 @@ import {
 } from "./layout.mjs";
 import { VIEWS, directViewIndex, nextViewIndex, renderView, renderViewTabs, viewLabel } from "./views.mjs";
 import { t } from "./i18n.mjs";
+import { loadCacheDiagnostics } from "./cache-diagnostics.mjs";
 
 const STATUS_TTL_MS = 8000;
 const MAX_EVENTS = 60;
@@ -20,7 +21,7 @@ export class OmpTopApp {
   #done;
   #viewIndex = 0;
   #scroll = 0;
-  #snapshot = { stats: undefined, quota: undefined, statsUpdatedAt: undefined, quotaUpdatedAt: undefined };
+  #snapshot = { stats: undefined, quota: undefined, cacheDiagnostics: undefined, statsUpdatedAt: undefined, quotaUpdatedAt: undefined };
   #states = new Map();
   #events = [];
   #status = "";
@@ -43,6 +44,7 @@ export class OmpTopApp {
       fetchStats: deps.fetchStats ?? fetchStats,
       loadHistoricalQuota: deps.loadHistoricalQuota ?? loadHistoricalQuota,
       createQuotaRefresh: deps.createQuotaRefresh ?? (() => new ProgressiveQuotaRefresh()),
+      loadCacheDiagnostics: deps.loadCacheDiagnostics ?? loadCacheDiagnostics,
     };
     this.#ui = ui ?? new TerminalUI({ render: (w, h) => this.render(w, h), input: data => this.handleInput(data) });
   }
@@ -100,26 +102,34 @@ export class OmpTopApp {
         if (!this.#disposed && this.#statsRefreshing) this.#ui.draw();
       }, 1000);
       this.#ui.draw();
-      void this.#deps.fetchStats().then(raw => {
-        if (this.#disposed) return;
-        this.#snapshot.stats = normalizeStats(raw);
-        this.#snapshot.statsUpdatedAt = Date.now();
-        this.#statsError = undefined;
-        this.#pushEvent("ok", t("top.statsRefreshedEvent", { count: this.#snapshot.stats.byModel.length }));
-        this.setStatus(this.#quotaRefreshing ? t("top.statsRefreshedQuotaPending") : t("top.statsRefreshed"));
-      }).catch(error => {
-        if (!this.#disposed) {
-          this.#statsError = String(error?.message || error);
-          this.#pushEvent("error", `stats refresh failed: ${this.#statsError}`);
-          this.setStatus(style.yellow(t("top.statsRefreshFailed", { message: this.#statsError })));
+      void (async () => {
+        try {
+          const raw = await this.#deps.fetchStats();
+          if (this.#disposed) return;
+          this.#snapshot.stats = normalizeStats(raw);
+          this.#snapshot.statsUpdatedAt = Date.now();
+          this.#statsError = undefined;
+          try {
+            this.#snapshot.cacheDiagnostics = await this.#deps.loadCacheDiagnostics();
+          } catch {
+            this.#snapshot.cacheDiagnostics = undefined;
+          }
+          this.#pushEvent("ok", t("top.statsRefreshedEvent", { count: this.#snapshot.stats.byModel.length }));
+          this.setStatus(this.#quotaRefreshing ? t("top.statsRefreshedQuotaPending") : t("top.statsRefreshed"));
+        } catch (error) {
+          if (!this.#disposed) {
+            this.#statsError = String(error?.message || error);
+            this.#pushEvent("error", `stats refresh failed: ${this.#statsError}`);
+            this.setStatus(style.yellow(t("top.statsRefreshFailed", { message: this.#statsError })));
+          }
+        } finally {
+          this.#statsRefreshing = false;
+          this.#statsRefreshStartedAt = undefined;
+          if (this.#statsPulse) clearInterval(this.#statsPulse);
+          this.#statsPulse = undefined;
+          this.#ui.draw();
         }
-      }).finally(() => {
-        this.#statsRefreshing = false;
-        this.#statsRefreshStartedAt = undefined;
-        if (this.#statsPulse) clearInterval(this.#statsPulse);
-        this.#statsPulse = undefined;
-        this.#ui.draw();
-      });
+      })();
     }
     if (!this.#quotaRefreshing) this.startQuotaRefresh();
   }
@@ -221,6 +231,7 @@ export class OmpTopApp {
       stats: this.#snapshot.stats,
       statsState,
       quota: this.#snapshot.quota,
+      cacheDiagnostics: this.#snapshot.cacheDiagnostics,
       providerStates: this.#states,
       quotaRefreshing: this.#quotaRefreshing,
       events: this.#events,
