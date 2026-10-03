@@ -226,6 +226,18 @@ function alertCorrelation(alert) {
   return "";
 }
 
+function alertAction(alert) {
+  if (alert.severity !== "critical" && alert.severity !== "warning") return "";
+  if (alert.kind === "quota-exhausted" || alert.kind === "quota-runway" || alert.kind === "quota-acceleration") {
+    const target = alert.attribution?.type === "direct" ? alert.attribution.model : providerLabel(alert.provider);
+    return t("overview.action.quota", { target });
+  }
+  if (alert.kind === "model-failure") return t("overview.action.modelFailure");
+  if (alert.kind === "cache-low") return t("overview.action.cache");
+  if (alert.kind === "runtime-error") return t("overview.action.runtime");
+  return "";
+}
+
 function renderAttention(intelligence, width) {
   const lines = [sectionTitle(t("section.attention"), width)];
   if (!intelligence.alerts.length) {
@@ -250,6 +262,8 @@ function renderAttention(intelligence, width) {
     if (correlation) lines.push(truncateAnsi(`   ${style.yellow(correlation)}`, width));
     const attribution = alertAttribution(alert);
     if (attribution) lines.push(truncateAnsi(`   ${style.dim(attribution)}`, width));
+    const action = alertAction(alert);
+    if (action) lines.push(truncateAnsi(`   ${style.bold(action)}`, width));
   }
   return lines;
 }
@@ -281,6 +295,16 @@ function renderCapacity(intelligence, width) {
   }
   for (const summary of intelligence.capacity.slice(0, 4)) {
     lines.push(` ${capacityLine(summary)}`);
+    if (summary.exhaustedCount || summary.atRiskCount || summary.watchCount) {
+      lines.push(style.dim(`   ${t("overview.capacity.counts", {
+        exhausted: summary.exhaustedCount,
+        risk: summary.atRiskCount,
+        watch: summary.watchCount,
+      })}`));
+    }
+    if (summary.resetCreditsAvailable > 0) {
+      lines.push(style.cyan(`   ${t("overview.capacity.resetCredits", { count: summary.resetCreditsAvailable })}`));
+    }
     if (summary.attribution) {
       const attribution = summary.attribution.type === "direct"
         ? t("overview.attribution.direct", { model: summary.attribution.model })
