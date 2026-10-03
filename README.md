@@ -104,14 +104,22 @@ No npm registry, npx, or bunx is involved.
 Install one exact release:
 
 ```bash
-omp-top upgrade --tag v0.5.1
+omp-top upgrade --tag v0.5.4
 ```
 
-Install the newest prerelease:
+Use the beta channel explicitly:
 
 ```bash
-omp-top upgrade --beta
+omp-top upgrade --channel beta
 ```
+
+Return from beta to the latest stable release:
+
+```bash
+omp-top upgrade --channel stable
+```
+
+`omp-top upgrade` remains the stable default. Channel choice is per command and is not sticky.
 
 Release assets are published as:
 
@@ -293,7 +301,7 @@ Docs-only changes do not need a version bump.
 
 ## Current version
 
-**v0.5.3**
+**v0.5.4**
 
 ## License
 
