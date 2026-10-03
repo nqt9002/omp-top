@@ -1,4 +1,4 @@
-import { padRight, truncateAnsi, visibleWidth } from "./format.mjs";
+import { padRight, style, truncateAnsi, visibleWidth } from "./format.mjs";
 
 export const WORKSPACE_MAX_WIDTH = 160;
 export const WORKSPACE_MIN_WIDTH = 40;
@@ -55,7 +55,7 @@ export function sectionTitle(label, width, status = "") {
   const left = ` ${String(label).toUpperCase()} `;
   const statusWidth = visibleWidth(status);
   const ruleWidth = Math.max(2, cleanWidth - visibleWidth(left) - (status ? statusWidth + 1 : 0));
-  return `${left}${"─".repeat(ruleWidth)}${status ? ` ${status}` : ""}`;
+  return `${style.bold(left)}${style.dim("─".repeat(ruleWidth))}${status ? ` ${status}` : ""}`;
 }
 
 export function joinColumns(left, right, width, { gap = 4, minWidth = 108 } = {}) {
