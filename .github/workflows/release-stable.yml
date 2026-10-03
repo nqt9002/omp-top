@@ -1,0 +1,44 @@
+name: Release Stable
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Committed stable package version on main, e.g. v0.6.0'
+        required: true
+        type: string
+      expected_sha:
+        description: 'Full 40-character main commit SHA to test and publish'
+        required: true
+        type: string
+      tested_beta:
+        description: 'Published/dogfooded beta tag with the same runtime (required except hotfix)'
+        required: false
+        type: string
+      hotfix_issue:
+        description: 'Emergency exception: tracking issue number, next patch only; mutually exclusive with tested_beta'
+        required: false
+        type: string
+      notes:
+        description: 'Beta test result, or explicit hotfix justification (at least 20 characters)'
+        required: true
+        type: string
+      confirm:
+        description: 'I reviewed the release PR and approve publication to stable users'
+        required: true
+        type: boolean
+        default: false
+permissions:
+  contents: read
+jobs:
+  release:
+    permissions:
+      contents: write
+    uses: ./.github/workflows/release-checked.yml
+    with:
+      channel: stable
+      tag: ${{ inputs.tag }}
+      expected_sha: ${{ inputs.expected_sha }}
+      notes: ${{ inputs.notes }}
+      tested_beta: ${{ inputs.tested_beta }}
+      hotfix_issue: ${{ inputs.hotfix_issue }}
+      confirmed: ${{ inputs.confirm }}
