@@ -285,7 +285,7 @@ When a new version reaches `main`, GitHub Actions:
 
 1. validates all runtime modules;
 2. runs the test suite;
-3. creates `v<version>` if it does not already exist;
+3. creates the GitHub Release/tag `vX.Y.Z` when that version does not already exist;
 4. builds the release archive;
 5. publishes the archive and SHA256 asset to GitHub Releases.
 
