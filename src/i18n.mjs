@@ -120,7 +120,6 @@ const EN = {
   "common.latency": "latency",
 
   "top.profile": "profile {name}",
-  "top.profile": "profile {name}",
   "top.statsFreshness": "stats {stats} · quota {quota}",
   "top.scroll": "scroll {current}/{total}",
   "top.hintsCompact": "1–6 view · Tab switch · r refresh · ↑↓ scroll · q exit",
@@ -297,6 +296,7 @@ const VI = {
   "common.output": "ra",
   "common.latency": "độ trễ",
 
+  "top.profile": "profile {name}",
   "top.statsFreshness": "stats {stats} · quota {quota}",
   "top.scroll": "cuộn {current}/{total}",
   "top.hintsCompact": "1–6 màn · Tab chuyển · r làm mới · ↑↓ cuộn · q thoát",
