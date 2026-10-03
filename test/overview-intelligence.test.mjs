@@ -209,7 +209,7 @@ test("Overview renders decision-support evidence in English and Vietnamese", () 
     const vietnamese = stripAnsi(renderView("overview", fixture, 156).join("\n"));
     assert.match(vietnamese, /CẦN CHÚ Ý/);
     assert.match(vietnamese, /Quota OpenAI Codex có thể cạn sau 4g/);
-    assert.match(vietnamese, /Workload chính của OpenAI Codex: gpt-6-astra/);
+    assert.match(vietnamese, /workload chính của OpenAI Codex là gpt-6-astra/);
     assert.match(vietnamese, /có thể cùng góp phần/);
     assert.match(vietnamese, /ĐỘ TIN CẬY MÔ HÌNH/);
   } finally {
