@@ -15,7 +15,6 @@ Usage:
 Upgrade:
   --channel stable     Latest stable GitHub Release (default)
   --channel beta       Latest published beta.N GitHub prerelease
-  --beta               Legacy alias for --channel beta
   --tag TAG            Exact published version; permits intentional rollback
 
 Channel choice applies to this command only; beta is never a silent opt-in.
