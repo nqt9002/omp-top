@@ -66,6 +66,36 @@ export function formatReset(resetsAt, now = Date.now()) {
   const d = Math.floor(h / 24); const rh = h % 24;
   return `reset ${d}d${rh ? ` ${rh}h` : ""}`;
 }
+export function formatDuration(ms) {
+  if (!Number.isFinite(ms)) return "-";
+  if (ms < 1000) return `${Math.round(ms)}ms`;
+  if (ms < 60000) return `${(ms / 1000).toFixed(ms < 10000 ? 1 : 0)}s`;
+  return `${(ms / 60000).toFixed(1)}m`;
+}
+export function formatMoney(value) {
+  if (!Number.isFinite(value)) return "-";
+  if (Math.abs(value) < 0.01) return `$${value.toFixed(4)}`;
+  if (Math.abs(value) < 10) return `$${value.toFixed(2)}`;
+  return `$${value.toFixed(1)}`;
+}
+export function formatHours(hours) {
+  if (!Number.isFinite(hours)) return "-";
+  if (hours < 1) return `${Math.max(1, Math.round(hours * 60))}m`;
+  if (hours < 24) return `${hours.toFixed(hours < 10 ? 1 : 0)}h`;
+  return `${(hours / 24).toFixed(hours < 72 ? 1 : 0)}d`;
+}
+export function formatPercentPerHour(fraction) {
+  if (!Number.isFinite(fraction)) return "-";
+  return `${(fraction * 100).toFixed(fraction * 100 < 10 ? 1 : 0)}%/h`;
+}
+export function sparkline(values, maxPoints = 28) {
+  const chars = "▁▂▃▄▅▆▇█";
+  const nums = (values ?? []).map(Number).filter(Number.isFinite).slice(-maxPoints);
+  if (!nums.length) return "-";
+  const min = Math.min(...nums); const max = Math.max(...nums);
+  if (max === min) return chars[0].repeat(nums.length);
+  return nums.map(value => chars[Math.max(0, Math.min(chars.length - 1, Math.round(((value - min) / (max - min)) * (chars.length - 1))))]).join("");
+}
 export function providerLabel(provider) {
   const known = {
     "openai-codex": "OpenAI Codex",
