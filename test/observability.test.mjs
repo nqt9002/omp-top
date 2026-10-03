@@ -100,7 +100,7 @@ test("app switches views with number, Tab and Shift+Tab without treating Shift+T
   app.handleInput("2");
   assert.match(stripAnsi(app.render(112, 28).join("\n")), /QUOTA \/ RUNWAY/);
   app.handleInput(Keys.shiftTab);
-  assert.match(stripAnsi(app.render(112, 28).join("\n")), /SYSTEM HEALTH/);
+  assert.match(stripAnsi(app.render(112, 28).join("\n")), /ATTENTION/);
   app.handleInput(Keys.tab);
   assert.match(stripAnsi(app.render(112, 28).join("\n")), /QUOTA \/ RUNWAY/);
   app.dispose();
@@ -125,31 +125,33 @@ test("responsive shell stays inside physical width and centers wide workspaces",
   app.dispose();
 });
 
-test("overview uses wide model space and distinguishes exhausted NOW from future risk", () => {
-  const longModel = "gemini-3.8-flash-super-long-observability-model-name";
+test("overview is anomaly-first and does not duplicate the detailed model table", () => {
   const stats = normalizeStats({
     overall: { totalRequests: 100, cacheRate: 0.66, errorRate: 0.004, avgTtft: 6500, avgDuration: 16000, avgTokensPerSecond: 45.9, totalInputTokens: 1000, totalOutputTokens: 500, totalCost: 12.34 },
-    byModel: [{ provider: "google-antigravity", model: longModel, totalRequests: 90, errorRate: 0, avgTtft: 500, avgTokensPerSecond: 50, totalCost: 10 }],
-    timeSeries: [{ requests: 1, errors: 0 }, { requests: 5, errors: 1 }],
+    byModel: [{ provider: "openai-codex", model: "gpt-6-astra", totalRequests: 90, failedRequests: 0, errorRate: 0, avgTtft: 500, avgTokensPerSecond: 50, totalCost: 10 }],
   });
   const now = Date.now();
   const quota = {
     reports: [{
       provider: "openai-codex",
       metadata: { accountId: "a" },
-      limits: [
-        { id: "done", amount: { usedFraction: 1 }, intelligence: { status: "exhausted", projectedExhaustAt: now } },
-        { id: "risk", amount: { usedFraction: 0.8 }, intelligence: { status: "at-risk", projectedExhaustAt: now + 2 * HOUR } },
-      ],
+      limits: [{
+        id: "done",
+        label: "Weekly",
+        scope: { provider: "openai-codex" },
+        window: { resetsAt: now + 2 * HOUR },
+        amount: { usedFraction: 1 },
+        intelligence: { status: "exhausted", usedFraction: 1, resetsAt: now + 2 * HOUR },
+      }],
     }],
   };
-  const wide = stripAnsi(renderView("overview", { stats, statsState: {}, quota }, 156).join("\n"));
-  assert.match(wide, /SYSTEM HEALTH/);
+  const wide = stripAnsi(renderView("overview", { stats, statsState: {}, quota, events: [] }, 156).join("\n"));
+  assert.match(wide, /ATTENTION/);
+  assert.match(wide, /OpenAI Codex quota is exhausted/);
   assert.match(wide, /exhausted NOW/);
-  assert.match(wide, /projected exhaustion in/);
-  assert.ok(!wide.includes("Nearest ETA"));
-  assert.ok(wide.includes(longModel));
-  assert.match(wide, /API-equivalent cost estimate reported by the current OMP stats snapshot/);
+  assert.match(wide, /CAPACITY \/ QUOTA/);
+  assert.match(wide, /SYSTEM CONTEXT/);
+  assert.doesNotMatch(wide, /TOP MODELS/);
 });
 
 test("compact cache and agent views use stacked fallbacks instead of wide tables", () => {
