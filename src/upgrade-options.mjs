@@ -1,15 +1,14 @@
 import { compareVersions, parseVersion, versionChannel } from './release-policy.mjs';
 
 /** Channel selection is per invocation; there is no hidden/sticky beta opt-in. */
-export function upgradeSelection({ channel, tag, prerelease = false } = {}) {
+export function upgradeSelection({ channel, tag } = {}) {
   if (channel !== undefined && !['stable', 'beta'].includes(channel)) throw new Error('--channel must be stable or beta');
-  if (tag !== undefined && (channel !== undefined || prerelease)) throw new Error('Use --tag OR --channel/--beta, not both');
-  if (prerelease && channel !== undefined) throw new Error('Use --beta OR --channel, not both');
+  if (tag !== undefined && channel !== undefined) throw new Error('Use --tag OR --channel, not both');
   if (tag !== undefined) {
     const version = parseVersion(tag).version;
     return { tag: `v${version}`, channel: versionChannel(version), explicit: true };
   }
-  return { tag: undefined, channel: channel ?? (prerelease ? 'beta' : 'stable'), explicit: channel !== undefined || prerelease };
+  return { tag: undefined, channel: channel ?? 'stable', explicit: channel !== undefined };
 }
 
 export function upgradeDecision(current, target, selection) {
@@ -24,7 +23,7 @@ export function upgradeDecision(current, target, selection) {
 }
 
 export function parseOptions(argv) {
-  const result = { command: 'run', redact: false, profile: undefined, quotaTimeout: undefined, channel: undefined, tag: undefined, prerelease: false, help: false, version: false };
+  const result = { command: 'run', redact: false, profile: undefined, quotaTimeout: undefined, channel: undefined, tag: undefined, help: false, version: false };
   let commandSet = false;
   const seen = new Set();
   const once = name => { if (seen.has(name)) throw new Error(`Duplicate option: ${name}`); seen.add(name); };
@@ -48,12 +47,11 @@ export function parseOptions(argv) {
     }
     if (arg === '--channel') { once(arg); result.channel = valueAt(i++, arg); continue; }
     if (arg === '--tag') { once(arg); result.tag = valueAt(i++, arg); continue; }
-    if (arg === '--beta') { once(arg); result.prerelease = true; continue; }
     if (arg === '-h' || arg === '--help') { result.help = true; continue; }
     if (arg === '-v' || arg === '--version') { result.version = true; continue; }
     throw new Error(`Unknown argument: ${arg}`);
   }
   upgradeSelection(result); // Validate before any network or filesystem mutation.
-  if (result.command !== 'upgrade' && (result.channel !== undefined || result.tag !== undefined || result.prerelease)) throw new Error('--channel, --tag and --beta are upgrade options');
+  if (result.command !== 'upgrade' && (result.channel !== undefined || result.tag !== undefined)) throw new Error('--channel and --tag are upgrade options');
   return result;
 }
