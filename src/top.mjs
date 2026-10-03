@@ -203,7 +203,7 @@ export class OmpTopApp {
     if (process.env.OMP_PROFILE) identity.push(`profile ${process.env.OMP_PROFILE}`);
     const title = identity.join(style.dim(" · "));
 
-    const freshness = workspace.innerWidth >= 96
+    const freshness = workspace.innerWidth >= 120
       ? style.dim(`stats ${statsTime} · quota ${quotaTime}`)
       : "";
     const tabs = renderViewTabs(this.#viewIndex, workspace.innerWidth);
