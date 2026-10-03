@@ -13,6 +13,7 @@ A small terminal monitor for **Oh My Pi (OMP)** request/cache statistics and pro
 - Cache breakdown by provider.
 - Multi-view TUI: Overview, Quota, Models, Cache, Agents, and Events.
 - Cache breakdown by provider and exact model.
+- Request-level cache diagnostics from OMP's local `stats.db`: uncached input by model, agent, project, session, and hourly bucket.
 - Model performance when OMP reports it: errors, TTFT, latency, tokens/sec, and API-equivalent cost.
 - Provider/account quota with burn rate, recent-vs-baseline acceleration, exhaustion ETA, sustainable pace, reset countdown, and reset-aware risk state.
 - Google Antigravity quota is split into its Gemini pool and the shared Claude/GPT third-party pool.
@@ -223,6 +224,18 @@ cache read / (uncached input + cache read)
 
 This avoids averaging model percentages incorrectly.
 
+### Cache diagnostics
+
+After `omp stats --json` finishes syncing session statistics, omp-top opens OMP's `stats.db` **read-only** and aggregates the same 24-hour decision window used by the default stats command.
+
+The diagnostic layer treats OMP's `input_tokens` column as uncached input because OMP stores cache-read tokens separately. This makes it possible to identify whether uncached input is concentrated in a particular model, agent type, project, or session without reading prompt contents.
+
+Cache alerts are impact-based rather than hit-rate-only. A high-volume model can therefore be surfaced when it owns a large share of uncached input even if that model drags its provider average down and would otherwise mask itself.
+
+Likely contributors such as subagent concentration, one dominant project/session, large uncached input per request, or poor reuse compared with sibling models are explicitly presented as diagnostics to investigate — not as proven causes of a cache miss.
+
+If `stats.db` is unavailable or its schema changes, omp-top falls back to the normal aggregate cache statistics.
+
 ### Quota
 
 A single background process runs:
@@ -284,6 +297,7 @@ Bun built-ins          used
 - Provider credentials remain owned by OMP.
 - `omp-top` does not implement OAuth or token refresh.
 - `agent.db` is opened read-only for progressive quota history.
+- `stats.db` is opened read-only for request-level cache diagnostics.
 - No localhost web server is exposed.
 - No Electron/browser runtime is used.
 - No arbitrary shell execution interface is exposed.
@@ -298,6 +312,7 @@ OMP_TOP_BIN_DIR        custom launcher directory
 OMP_TOP_GITHUB_TOKEN   optional token for GitHub API rate limits
 OMP_TOP_GITHUB_REPO    alternate release repository for development/testing
 OMP_TOP_LANG           one-process UI locale override: en or vi
+OMP_TOP_STATS_DB       optional stats.db override for diagnostics/testing
 ```
 
 ## Limitations

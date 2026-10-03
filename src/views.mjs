@@ -132,6 +132,9 @@ function alertTitle(alert) {
   if (alert.kind === "model-failure") {
     return t("overview.alert.modelFailure", { provider: providerLabel(alert.provider), model: alert.model });
   }
+  if (alert.kind === "cache-impact") {
+    return t("overview.alert.cacheImpact", { provider: providerLabel(alert.provider), model: alert.model });
+  }
   if (alert.kind === "cache-low") {
     return t("overview.alert.cacheLow", { provider: providerLabel(alert.provider), model: alert.model, rate: percent(alert.cacheRate) });
   }
@@ -171,6 +174,18 @@ function alertDetail(alert) {
       rate: percent(alert.errorRate),
       confidence: confidenceLabel(alert.confidence),
     });
+  }
+  if (alert.kind === "cache-impact") {
+    const base = t("overview.detail.cacheImpact", {
+      uncached: compactNumber(alert.uncachedInputTokens),
+      share: percent(alert.uncachedShare),
+      rate: percent(alert.cacheRate),
+      requests: compactNumber(alert.requests),
+    });
+    if (Number.isFinite(alert.comparisonRate) && Number.isFinite(alert.gap)) {
+      return `${base} · ${t("overview.detail.cachePeer", { rate: percent(alert.comparisonRate), gap: ppText(alert.gap) })}`;
+    }
+    return base;
   }
   if (alert.kind === "cache-low") {
     return t("overview.detail.cacheLow", {
@@ -233,6 +248,7 @@ function alertAction(alert) {
     return t("overview.action.quota", { target });
   }
   if (alert.kind === "model-failure") return t("overview.action.modelFailure");
+  if (alert.kind === "cache-impact") return t("overview.action.cacheImpact");
   if (alert.kind === "cache-low") return t("overview.action.cache");
   if (alert.kind === "runtime-error") return t("overview.action.runtime");
   return "";
@@ -347,18 +363,19 @@ function renderReliability(intelligence, width) {
 function renderCacheSignals(intelligence, width) {
   const lines = [sectionTitle(t("section.cacheSignals"), width)];
   lines.push(t("overview.cache.overall", { rate: percent(intelligence.cache.overallCacheRate) }));
-  const low = intelligence.cache.lowModels[0];
-  if (low) {
-    lines.push(` ${severityStyle(low.severity, "●")} ${t("overview.cache.lowest", { model: low.model, rate: percent(low.cacheRate) })}`);
+  const impact = intelligence.cache.impactModels?.[0];
+  if (impact) {
+    lines.push(` ${severityStyle(impact.severity, "●")} ${providerLabel(impact.provider)}/${impact.model}`);
+    lines.push(`   ${compactNumber(impact.uncachedInputTokens)} uncached · ${percent(impact.uncachedShare)} · Cache hit ${percent(impact.cacheRate)}`);
   } else {
-    lines.push(style.green(` ✓ ${t("overview.cache.noEvidence")}`));
+    const low = intelligence.cache.lowModels[0];
+    if (low) lines.push(` ${severityStyle(low.severity, "●")} ${t("overview.cache.lowest", { model: low.model, rate: percent(low.cacheRate) })}`);
+    else lines.push(style.green(` ✓ ${t("overview.cache.noEvidence")}`));
   }
   const uncached = intelligence.cache.highestUncachedModel;
-  if (uncached && Number(uncached.totalInputTokens || 0) > 0) {
-    lines.push(t("overview.cache.uncached", {
-      model: uncached.model,
-      tokens: compactNumber(Number(uncached.totalInputTokens || 0)),
-    }));
+  const uncachedTokens = Number(uncached?.uncachedInputTokens ?? uncached?.totalInputTokens ?? 0);
+  if (uncached && uncachedTokens > 0 && (!impact || impact.model !== uncached.model || impact.provider !== uncached.provider)) {
+    lines.push(t("overview.cache.uncached", { model: uncached.model, tokens: compactNumber(uncachedTokens) }));
   }
   lines.push(style.dim(` ${viewHint("4")}`));
   return lines;
@@ -422,6 +439,7 @@ function renderOverview(context, width) {
   const intelligence = buildOverviewIntelligence({
     stats: context.stats,
     quota: context.quota,
+    cacheDiagnostics: context.cacheDiagnostics,
     events: context.events,
   });
 
@@ -556,6 +574,32 @@ function renderModels(context, width) {
   return lines;
 }
 
+function shortPath(value) {
+  const text = String(value ?? "");
+  if (!text) return "-";
+  const home = process.env.HOME || "";
+  const normalized = home && text.startsWith(home) ? `~${text.slice(home.length)}` : text;
+  const parts = normalized.split("/").filter(Boolean);
+  if (parts.length <= 3) return normalized;
+  return `…/${parts.slice(-3).join("/")}`;
+}
+
+function renderCacheDiagnosisReason(reason) {
+  if (reason.kind === "agent-concentration") {
+    return t("cache.cause.agent", { agent: reason.agentType, share: percent(reason.share) });
+  }
+  if (reason.kind === "project-concentration") {
+    return t("cache.cause.project", { project: shortPath(reason.folder), share: percent(reason.share) });
+  }
+  if (reason.kind === "session-concentration") {
+    return t("cache.cause.session", { share: percent(reason.share) });
+  }
+  if (reason.kind === "large-uncached-request") {
+    return t("cache.cause.largeRequest", { ratio: ratioText(reason.ratio) });
+  }
+  return "";
+}
+
 function renderCache(context, width) {
   const stats = context.stats;
   const lines = [sectionTitle(t("section.cacheEfficiency"), width)];
@@ -611,6 +655,70 @@ function renderCache(context, width) {
         const save = percent(Number(row.cacheSavings || 0)).padStart(7);
         lines.push(`  ${tableCell(providerLabel(String(row.provider ?? "unknown")), providerWidth)} ${tableCell(String(row.model ?? "unknown"), modelWidth)} ${req} ${cacheColor(rate, hit)} ${read} ${write} ${save}`);
       }
+    }
+  }
+
+  const diagnostics = context.cacheDiagnostics;
+  if (!diagnostics) {
+    lines.push("", style.dim(t("cache.diagUnavailable")));
+    return lines;
+  }
+
+  const intelligence = buildOverviewIntelligence({ stats, cacheDiagnostics: diagnostics, quota: context.quota, events: context.events });
+  lines.push("", sectionTitle(t("section.cacheImpact"), width));
+  lines.push(style.dim(t("cache.diagSummary", {
+    uncached: compactNumber(diagnostics.overall?.uncachedInputTokens || 0),
+    rate: percent(diagnostics.overall?.cacheRate),
+  })));
+
+  if (!intelligence.cache.impactModels.length) {
+    lines.push(style.green(` ✓ ${t("overview.cache.noEvidence")}`));
+  } else {
+    for (const impact of intelligence.cache.impactModels.slice(0, 5)) {
+      lines.push(` ${severityStyle(impact.severity, "●")} ${t("cache.impactRow", {
+        provider: providerLabel(impact.provider),
+        model: impact.model,
+        uncached: compactNumber(impact.uncachedInputTokens),
+        share: percent(impact.uncachedShare),
+        rate: percent(impact.cacheRate),
+        requests: compactNumber(impact.requests),
+      })}`);
+      for (const reason of impact.diagnosis?.likely?.slice(0, 3) ?? []) {
+        const text = renderCacheDiagnosisReason(reason);
+        if (text) lines.push(style.dim(`   ${t("cache.cause.prefix", { text })}`));
+      }
+    }
+  }
+
+  const target = intelligence.cache.impactModels[0];
+  if (target?.diagnosis) {
+    const total = Math.max(1, target.uncachedInputTokens);
+
+    lines.push("", sectionTitle(t("section.cacheByAgent"), width));
+    for (const row of target.diagnosis.agents.slice(0, 5)) {
+      lines.push(` ${t("cache.agentRow", {
+        agent: row.agentType,
+        uncached: compactNumber(row.uncachedInputTokens),
+        share: percent(row.uncachedInputTokens / total),
+      })}`);
+    }
+
+    lines.push("", sectionTitle(t("section.cacheProjects"), width));
+    for (const row of target.diagnosis.folders.slice(0, 5)) {
+      lines.push(` ${t("cache.projectRow", {
+        project: shortPath(row.folder),
+        uncached: compactNumber(row.uncachedInputTokens),
+        share: percent(row.uncachedInputTokens / total),
+      })}`);
+    }
+
+    lines.push("", sectionTitle(t("section.cacheSessions"), width));
+    for (const row of target.diagnosis.sessions.slice(0, 5)) {
+      lines.push(` ${t("cache.sessionRow", {
+        session: shortPath(row.sessionFile),
+        uncached: compactNumber(row.uncachedInputTokens),
+        share: percent(row.uncachedInputTokens / total),
+      })}`);
     }
   }
   return lines;

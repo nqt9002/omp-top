@@ -286,9 +286,67 @@ function reliabilitySummary(models) {
   };
 }
 
-function cacheSummary(stats, facts) {
+function weightedCacheRate(rows) {
+  let uncached = 0;
+  let cached = 0;
+  for (const row of rows ?? []) {
+    uncached += Number(row?.uncachedInputTokens || row?.totalInputTokens || 0);
+    cached += Number(row?.cacheReadTokens || row?.totalCacheReadTokens || 0);
+  }
+  const total = uncached + cached;
+  return total > 0 ? cached / total : undefined;
+}
+
+function medianNumber(values) {
+  const sorted = (values ?? []).filter(Number.isFinite).sort((a, b) => a - b);
+  if (!sorted.length) return undefined;
+  const middle = Math.floor(sorted.length / 2);
+  return sorted.length % 2 ? sorted[middle] : (sorted[middle - 1] + sorted[middle]) / 2;
+}
+
+function cacheDiagnosis(cacheDiagnostics, target) {
+  if (!cacheDiagnostics || !target) return undefined;
+  const match = row => row.provider === target.provider && row.model === target.model;
+  const agents = (cacheDiagnostics.byAgentModel ?? []).filter(match)
+    .sort((a, b) => b.uncachedInputTokens - a.uncachedInputTokens);
+  const folders = (cacheDiagnostics.byFolderModel ?? []).filter(match)
+    .sort((a, b) => b.uncachedInputTokens - a.uncachedInputTokens);
+  const sessions = (cacheDiagnostics.bySessionModel ?? []).filter(match)
+    .sort((a, b) => b.uncachedInputTokens - a.uncachedInputTokens);
+  const total = Math.max(1, target.uncachedInputTokens || 0);
+  const topAgent = agents[0] ? { ...agents[0], share: agents[0].uncachedInputTokens / total } : undefined;
+  const topFolder = folders[0] ? { ...folders[0], share: folders[0].uncachedInputTokens / total } : undefined;
+  const topSession = sessions[0] ? { ...sessions[0], share: sessions[0].uncachedInputTokens / total } : undefined;
+
+  const peers = (cacheDiagnostics.byModel ?? [])
+    .filter(row => row.provider === target.provider && row.model !== target.model)
+    .filter(row => row.requests >= CACHE_MIN_REQUESTS);
+  const peerInputPerRequest = medianNumber(peers.map(row => row.requests > 0 ? row.uncachedInputTokens / row.requests : undefined));
+  const inputPerRequest = target.requests > 0 ? target.uncachedInputTokens / target.requests : undefined;
+  const largePromptRatio = Number.isFinite(peerInputPerRequest) && peerInputPerRequest > 0 && Number.isFinite(inputPerRequest)
+    ? inputPerRequest / peerInputPerRequest
+    : undefined;
+
+  const likely = [];
+  if (topAgent && topAgent.agentType !== "main" && topAgent.share >= 0.5) {
+    likely.push({ kind: "agent-concentration", agentType: topAgent.agentType, share: topAgent.share });
+  }
+  if (topFolder && topFolder.share >= 0.5) {
+    likely.push({ kind: "project-concentration", folder: topFolder.folder, share: topFolder.share });
+  }
+  if (topSession && topSession.share >= 0.3) {
+    likely.push({ kind: "session-concentration", sessionFile: topSession.sessionFile, folder: topSession.folder, share: topSession.share });
+  }
+  if (Number.isFinite(largePromptRatio) && largePromptRatio >= 2) {
+    likely.push({ kind: "large-uncached-request", ratio: largePromptRatio, inputPerRequest, peerInputPerRequest });
+  }
+
+  return { agents, folders, sessions, topAgent, topFolder, topSession, inputPerRequest, peerInputPerRequest, largePromptRatio, likely };
+}
+
+function cacheSummary(stats, facts, cacheDiagnostics) {
   const overall = clamp01(Number(stats?.overall?.cacheRate || 0));
-  const candidates = [];
+  const fallbackCandidates = [];
   for (const provider of facts.providers.values()) {
     const row = provider.lowCacheModel;
     if (!row) continue;
@@ -299,7 +357,7 @@ function cacheSummary(stats, facts) {
     if (rate < 0.3 && peerGap >= 0.15 && row.totalRequests >= 10) severity = "warning";
     else if (rate < 0.5 && peerGap >= 0.2) severity = "watch";
     else continue;
-    candidates.push({
+    fallbackCandidates.push({
       provider: row.provider,
       model: row.model,
       cacheRate: rate,
@@ -312,24 +370,77 @@ function cacheSummary(stats, facts) {
       score: SEVERITY[severity] * 100 + Math.round(peerGap * 100),
     });
   }
-  candidates.sort((a, b) => b.score - a.score);
+  fallbackCandidates.sort((a, b) => b.score - a.score);
 
   const providerRows = [...facts.providers.values()]
     .filter(row => row.cacheSupported && Number.isFinite(row.cacheRate))
     .sort((a, b) => a.cacheRate - b.cacheRate);
 
-  const highestUncached = [...facts.models]
+  const diagModels = cacheDiagnostics?.byModel ?? [];
+  const totalUncached = Number(cacheDiagnostics?.overall?.uncachedInputTokens || 0);
+  const impactModels = [];
+  for (const row of diagModels) {
+    if (row.requests < 10 || row.uncachedInputTokens < 500_000) continue;
+    const evidence = row.cacheReadTokens + row.cacheWriteTokens > 0;
+    if (!evidence) continue;
+
+    const siblings = diagModels
+      .filter(peer => peer.provider === row.provider && peer.model !== row.model)
+      .filter(peer => peer.requests >= CACHE_MIN_REQUESTS)
+      .filter(peer => peer.cacheReadTokens + peer.cacheWriteTokens > 0);
+    const siblingRate = weightedCacheRate(siblings);
+    const peerRates = diagModels
+      .filter(peer => peer.provider !== row.provider || peer.model !== row.model)
+      .filter(peer => peer.requests >= CACHE_MIN_REQUESTS)
+      .filter(peer => peer.cacheReadTokens + peer.cacheWriteTokens > 0)
+      .map(peer => peer.cacheRate);
+    const peerMedian = medianNumber(peerRates);
+    const comparisonRate = Number.isFinite(siblingRate) ? siblingRate : peerMedian;
+    const gap = Number.isFinite(comparisonRate) ? comparisonRate - row.cacheRate : undefined;
+    const share = totalUncached > 0 ? row.uncachedInputTokens / totalUncached : row.uncachedShare ?? 0;
+
+    let severity;
+    if ((share >= 0.5 && row.uncachedInputTokens >= 5_000_000 && row.cacheRate < 0.75)
+      || (row.uncachedInputTokens >= 20_000_000 && row.cacheRate < 0.65)) {
+      severity = "warning";
+    } else if ((share >= 0.25 && row.uncachedInputTokens >= 2_000_000 && row.cacheRate < 0.8)
+      || (Number.isFinite(gap) && gap >= 0.2 && row.uncachedInputTokens >= 1_000_000)) {
+      severity = "watch";
+    } else {
+      continue;
+    }
+
+    const diagnosis = cacheDiagnosis(cacheDiagnostics, row);
+    impactModels.push({
+      ...row,
+      uncachedShare: share,
+      siblingCacheRate: siblingRate,
+      peerMedianCacheRate: peerMedian,
+      comparisonRate,
+      gap,
+      severity,
+      diagnosis,
+      score: SEVERITY[severity] * 100
+        + Math.min(70, Math.round(share * 70))
+        + Math.min(40, Math.round(row.uncachedInputTokens / 1_000_000)),
+    });
+  }
+  impactModels.sort((a, b) => b.score - a.score);
+
+  const highestUncached = diagModels[0] ?? [...facts.models]
     .filter(row => row.totalRequests >= CACHE_MIN_REQUESTS)
     .sort((a, b) => Number(b.totalInputTokens || 0) - Number(a.totalInputTokens || 0))[0];
 
   return {
-    overallCacheRate: overall,
-    lowModels: candidates,
+    overallCacheRate: cacheDiagnostics?.overall?.cacheRate ?? overall,
+    totalUncachedInputTokens: totalUncached || Number(stats?.overall?.totalInputTokens || 0),
+    impactModels,
+    lowModels: fallbackCandidates,
     lowestProvider: providerRows[0],
     highestUncachedModel: highestUncached,
+    diagnosticsAvailable: Boolean(cacheDiagnostics),
   };
 }
-
 function agentSummary(stats) {
   const rows = (stats?.byAgentType ?? []).map(row => ({ ...row, tokens: tokenTotal(row) }));
   const total = rows.reduce((sum, row) => sum + row.tokens, 0);
@@ -362,12 +473,12 @@ function pushAlert(alerts, alert) {
   alerts.push({ ...alert, score: SEVERITY[alert.severity] * 100 + (alert.urgency ?? 0) + confidenceScore });
 }
 
-export function buildOverviewIntelligence({ stats, quota, events = [], now = Date.now() } = {}) {
+export function buildOverviewIntelligence({ stats, quota, cacheDiagnostics, events = [], now = Date.now() } = {}) {
   const facts = modelFacts(stats ?? {});
   const quotaRows = flattenQuota(quota);
   const capacity = providerQuotaSummaries(quotaRows, facts, now);
   const reliability = reliabilitySummary(facts.models);
-  const cache = cacheSummary(stats ?? {}, facts);
+  const cache = cacheSummary(stats ?? {}, facts, cacheDiagnostics);
   const agents = agentSummary(stats ?? {});
   const activity = eventSummary(events, now);
   const alerts = [];
@@ -449,16 +560,30 @@ export function buildOverviewIntelligence({ stats, quota, events = [], now = Dat
     });
   }
 
-  for (const low of cache.lowModels.slice(0, 2)) {
+  for (const impact of cache.impactModels.slice(0, 2)) {
     pushAlert(alerts, {
-      kind: "cache-low",
+      kind: "cache-impact",
       domain: "cache",
-      severity: low.severity,
-      urgency: Math.round(low.gap * 50),
-      confidence: confidenceForRequests(low.totalRequests),
+      severity: impact.severity,
+      urgency: Math.min(60, 20 + Math.round(impact.uncachedShare * 40)),
+      confidence: confidenceForRequests(impact.requests),
       viewKey: "4",
-      ...low,
+      ...impact,
     });
+  }
+
+  if (!cache.impactModels.length) {
+    for (const low of cache.lowModels.slice(0, 2)) {
+      pushAlert(alerts, {
+        kind: "cache-low",
+        domain: "cache",
+        severity: low.severity,
+        urgency: Math.round(low.gap * 50),
+        confidence: confidenceForRequests(low.totalRequests),
+        viewKey: "4",
+        ...low,
+      });
+    }
   }
 
   const perf = reliability.performanceOutliers[0];
