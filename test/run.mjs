@@ -114,7 +114,7 @@ await test("first-load stats state is visible inline and not mislabeled unavaila
   });
   await app.refresh();
   const screen = app.render(220, 28).join("\n");
-  assert.ok(screen.includes("SYSTEM HEALTH"));
+  assert.ok(screen.includes("ATTENTION"));
   assert.ok(screen.includes("calculating"));
   assert.ok(screen.includes("First load may take a while"));
   assert.ok(!screen.includes("Stats unavailable"));
