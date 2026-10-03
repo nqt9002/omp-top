@@ -10,7 +10,7 @@ import {
 } from "./format.mjs";
 
 export const VIEWS = [
-  { id: "overview", key: "1", labelKey: "view.overview", shortKey: "view.overt(view.shortKey)" },
+  { id: "overview", key: "1", labelKey: "view.overview", shortKey: "view.overview.short" },
   { id: "quota", key: "2", labelKey: "view.quota", shortKey: "view.quota.short" },
   { id: "models", key: "3", labelKey: "view.models", shortKey: "view.models.short" },
   { id: "cache", key: "4", labelKey: "view.cache", shortKey: "view.cache.short" },
@@ -20,7 +20,7 @@ export const VIEWS = [
 
 export function viewLabel(viewOrId) {
   const view = typeof viewOrId === "string" ? VIEWS.find(item => item.id === viewOrId) : viewOrId;
-  return view ? t(t(view.labelKey)Key) : String(viewOrId ?? "");
+  return view ? t(view.labelKey) : String(viewOrId ?? "");
 }
 
 export function nextViewIndex(index, delta) {
