@@ -1,5 +1,6 @@
 import { parseNoisyJson } from "./json.mjs";
 import { resolveAgentDbPath, spawnUsage } from "./omp.mjs";
+import { quotaIntelligenceBySeries, quotaSeriesKey } from "./intelligence.mjs";
 
 const LOOKBACK_MS = 30 * 24 * 60 * 60 * 1000;
 const POLL_MS = 400;
@@ -71,7 +72,7 @@ export class UsageHistoryReader {
 function latestRows(rows) {
   const latest = new Map();
   for (const row of rows) {
-    const key = `${row.provider}\0${row.accountKey}\0${row.limitId}`;
+    const key = quotaSeriesKey(row);
     const previous = latest.get(key);
     if (!previous || row.recordedAt >= previous.recordedAt) latest.set(key, row);
   }
@@ -80,6 +81,7 @@ function latestRows(rows) {
 
 export function snapshotsToQuota(rows, redact = false) {
   const latest = latestRows(rows);
+  const intelligence = quotaIntelligenceBySeries(rows);
   const grouped = new Map();
   const accountOrdinals = new Map();
   let generatedAt = 0;
@@ -104,30 +106,31 @@ export function snapshotsToQuota(rows, redact = false) {
     const metadata = redact
       ? { accountId: `Account ${group.ordinal}` }
       : sample.email ? { email: sample.email } : sample.accountId ? { accountId: sample.accountId } : { accountId: sample.accountKey };
-    const limits = group.rows.map(row => ({
-      id: row.limitId,
-      label: row.label,
-      scope: { provider: row.provider, accountId: redact ? `Account ${group.ordinal}` : (row.accountId ?? row.accountKey) },
-      window: {
+    const limits = group.rows.map(row => {
+      const derived = intelligence.get(quotaSeriesKey(row));
+      return {
         id: row.limitId,
-        label: row.windowLabel ?? row.label,
-        ...(Number.isFinite(row.resetsAt) ? { resetsAt: row.resetsAt } : {}),
-      },
-      amount: { ...(Number.isFinite(row.usedFraction) ? { usedFraction: row.usedFraction } : {}), unit: "percent" },
-      ...(row.status ? { status: row.status } : {}),
-    }));
+        label: row.label,
+        scope: { provider: row.provider, accountId: redact ? `Account ${group.ordinal}` : (row.accountId ?? row.accountKey) },
+        window: {
+          id: row.limitId,
+          label: row.windowLabel ?? row.label,
+          ...(Number.isFinite(row.resetsAt) ? { resetsAt: row.resetsAt } : {}),
+        },
+        amount: { ...(Number.isFinite(row.usedFraction) ? { usedFraction: row.usedFraction } : {}), unit: "percent" },
+        ...(row.status ? { status: row.status } : {}),
+        ...(derived ? { intelligence: derived } : {}),
+      };
+    });
     reports.push({ provider: group.provider, fetchedAt, metadata, limits });
   }
   return { generatedAt: generatedAt || undefined, reports };
 }
 
-
 function limitUsedFraction(limit) {
   const amount = limit?.amount ?? {};
   if (Number.isFinite(amount.usedFraction)) return Number(amount.usedFraction);
-  if (Number.isFinite(amount.used) && Number.isFinite(amount.limit) && Number(amount.limit) > 0) {
-    return Number(amount.used) / Number(amount.limit);
-  }
+  if (Number.isFinite(amount.used) && Number.isFinite(amount.limit) && Number(amount.limit) > 0) return Number(amount.used) / Number(amount.limit);
   if (Number.isFinite(amount.remainingFraction)) return Math.max(0, 1 - Number(amount.remainingFraction));
   return undefined;
 }
@@ -178,12 +181,9 @@ export function quotaDisplayGroups(report) {
 
     const windowKey = antigravityWindowKey(limit);
     const shared = isAntigravitySharedLimit(limit);
-    const sharedIdentity =
-      typeof limit?.scope?.sharedGroup === "string" && limit.scope.sharedGroup
-        ? limit.scope.sharedGroup
-        : shared
-          ? label + ":" + windowKey
-          : undefined;
+    const sharedIdentity = typeof limit?.scope?.sharedGroup === "string" && limit.scope.sharedGroup
+      ? limit.scope.sharedGroup
+      : shared ? label + ":" + windowKey : undefined;
     const key = sharedIdentity ? "shared:" + sharedIdentity : "limit:" + String(limit?.id || windowKey);
 
     if (!group.entries.has(key)) group.order.push(key);
@@ -193,10 +193,7 @@ export function quotaDisplayGroups(report) {
   const priority = label => /^Gemini$/i.test(label) ? 0 : /\(shared\)/i.test(label) ? 1 : 2;
   return [...groups.values()]
     .sort((a, b) => priority(a.label) - priority(b.label) || a.label.localeCompare(b.label))
-    .map(group => ({
-      label: group.label,
-      limits: group.order.map(key => group.entries.get(key)).filter(Boolean),
-    }));
+    .map(group => ({ label: group.label, limits: group.order.map(key => group.entries.get(key)).filter(Boolean) }));
 }
 
 function reportIdentity(report) {
@@ -248,12 +245,47 @@ export function mergeProviderReports(payload, provider, freshReports) {
   return { ...payload, generatedAt: generatedAt || payload?.generatedAt, reports: [...other, ...next] };
 }
 
+/** Enrich authoritative final usage JSON with matching read-only history intelligence, without reintroducing stale accounts/limits. */
+export function enrichQuotaPayload(freshPayload, historicalPayload) {
+  const freshReports = Array.isArray(freshPayload?.reports) ? freshPayload.reports : [];
+  const historicalReports = Array.isArray(historicalPayload?.reports) ? historicalPayload.reports : [];
+  const byProvider = new Map();
+  for (const report of historicalReports) {
+    const bucket = byProvider.get(report.provider) ?? [];
+    bucket.push(report);
+    byProvider.set(report.provider, bucket);
+  }
+  const ordinals = new Map();
+  const reports = freshReports.map(fresh => {
+    const candidates = byProvider.get(fresh.provider) ?? [];
+    const ordinal = ordinals.get(fresh.provider) ?? 0;
+    ordinals.set(fresh.provider, ordinal + 1);
+    const identity = reportIdentity(fresh);
+    const old = (identity && candidates.find(report => reportIdentity(report) === identity)) || candidates[ordinal];
+    if (!old) return fresh;
+    const oldLimits = new Map((old.limits ?? []).map(limit => [limit.id || limit.label || JSON.stringify(limit.scope ?? {}), limit]));
+    const limits = (fresh.limits ?? []).map(limit => {
+      const key = limit.id || limit.label || JSON.stringify(limit.scope ?? {});
+      const previous = oldLimits.get(key);
+      return previous ? {
+        ...previous, ...limit,
+        scope: { ...previous.scope, ...limit.scope },
+        window: (previous.window || limit.window) ? { ...previous.window, ...limit.window } : undefined,
+        amount: { ...previous.amount, ...limit.amount },
+        ...(previous.intelligence ? { intelligence: previous.intelligence } : {}),
+      } : limit;
+    });
+    return { ...old, ...fresh, metadata: { ...old.metadata, ...fresh.metadata }, limits };
+  });
+  return { ...freshPayload, reports };
+}
+
 function fingerprint(reports) {
   return JSON.stringify(reports.map(report => ({
     provider: report.provider,
     fetchedAt: report.fetchedAt,
     metadata: report.metadata,
-    limits: report.limits?.map(limit => ({ id: limit.id, amount: limit.amount, status: limit.status, window: limit.window })),
+    limits: report.limits?.map(limit => ({ id: limit.id, amount: limit.amount, status: limit.status, window: limit.window, intelligence: limit.intelligence })),
   })));
 }
 
@@ -275,6 +307,7 @@ export class ProgressiveQuotaRefresh {
   #timeoutTimer;
   #cancelled = false;
   #fingerprints = new Map();
+  #baselineRows = [];
 
   cancel() {
     this.#cancelled = true;
@@ -287,9 +320,11 @@ export class ProgressiveQuotaRefresh {
   async run(redact, hooks = {}) {
     const startedAt = Date.now();
     this.#reader = await UsageHistoryReader.open();
+    if (this.#reader.available) this.#baselineRows = this.#reader.readSince(Date.now() - LOOKBACK_MS);
     const poll = () => {
       if (this.#cancelled || !this.#reader?.available) return;
-      const payload = snapshotsToQuota(this.#reader.readSince(startedAt - 1000), redact);
+      const recent = this.#reader.readSince(startedAt - 1000);
+      const payload = snapshotsToQuota([...this.#baselineRows, ...recent], redact);
       const providers = new Set((payload.reports ?? []).map(report => report.provider));
       for (const provider of providers) {
         const reports = (payload.reports ?? []).filter(report => report.provider === provider);
@@ -321,8 +356,11 @@ export class ProgressiveQuotaRefresh {
       poll();
       if (this.#cancelled) return;
       if (code !== 0) throw new Error((stderr || stdout || `omp usage exited ${code}`).trim());
-      const payload = parseNoisyJson(stdout, "omp usage --json");
-      hooks.onComplete?.(payload);
+      const fresh = parseNoisyJson(stdout, "omp usage --json");
+      const historical = this.#reader.available
+        ? snapshotsToQuota(this.#reader.readSince(Date.now() - LOOKBACK_MS), redact)
+        : snapshotsToQuota(this.#baselineRows, redact);
+      hooks.onComplete?.(enrichQuotaPayload(fresh, historical));
     } catch (error) {
       if (!this.#cancelled) hooks.onError?.(errorMessage(error));
     } finally {
@@ -330,6 +368,7 @@ export class ProgressiveQuotaRefresh {
       if (this.#timeoutTimer) clearTimeout(this.#timeoutTimer);
       this.#reader?.close();
       this.#reader = undefined;
+      this.#baselineRows = [];
       this.#child = undefined;
     }
   }
