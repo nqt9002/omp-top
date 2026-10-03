@@ -6,13 +6,15 @@ A small terminal monitor for **Oh My Pi (OMP)** request/cache statistics and pro
 
 ## What it shows
 
+- Actionable Overview intelligence that ranks quota, model reliability, cache, workload, and runtime anomalies before showing routine context.
+- Cross-domain decision support: quota runway/burn acceleration, low-cache signals, request-volume pressure, model failures, agent concentration, and recent runtime errors.
 - Overall request and token usage.
 - Cache hit rate, cache read/write tokens, and cache savings.
 - Cache breakdown by provider.
 - Multi-view TUI: Overview, Quota, Models, Cache, Agents, and Events.
 - Cache breakdown by provider and exact model.
 - Model performance when OMP reports it: errors, TTFT, latency, tokens/sec, and API-equivalent cost.
-- Provider/account quota with burn rate, exhaustion ETA, sustainable pace, and reset-aware risk state.
+- Provider/account quota with burn rate, recent-vs-baseline acceleration, exhaustion ETA, sustainable pace, reset countdown, and reset-aware risk state.
 - Google Antigravity quota is split into its Gemini pool and the shared Claude/GPT third-party pool.
 - Progressive quota updates: faster providers appear first while slower providers continue refreshing.
 - Last-known quota while a live refresh is still running.
@@ -186,6 +188,23 @@ omp-top upgrade
 
 ## How it works
 
+### Overview intelligence
+
+Overview is intentionally not a duplicate of the detail tabs. It surfaces the highest-value signals first and points to the relevant drill-down view.
+
+Examples include:
+
+- a provider quota likely to exhaust before reset;
+- quota burn running materially faster than its reset-aware historical baseline;
+- low cache efficiency on a model/provider with meaningful cache activity;
+- request failures weighted by both error rate and sample size;
+- elevated request volume that coincides with faster quota burn;
+- dominant agent/role token share and recent omp-top runtime errors.
+
+For shared provider quota pools, omp-top does **not** claim that one model consumed a measured share of quota unless OMP supplies a model-scoped quota. It may show a dominant model as workload attribution (for example, 80% of that provider's requests) and labels this as inference rather than direct quota accounting.
+
+Likewise, cache/request correlations are phrased as possible contributors, not causes. Quota reset timestamps are shown as resets; they are not described as subscription renewal dates unless a provider explicitly exposes billing-renewal metadata.
+
 ### Stats and cache
 
 `omp-top` runs:
@@ -284,6 +303,8 @@ OMP_TOP_LANG           one-process UI locale override: en or vi
 ## Limitations
 
 - Cache statistics are available by provider/model, not by individual OAuth account, because OMP session stats do not carry a stable credential identity.
+- Shared quota history usually does not identify the exact model that consumed quota. Overview therefore distinguishes direct model-scoped quota from inferred dominant workload.
+- OMP's current 24h stats expose aggregate cache efficiency but not a historical cache-rate series, so omp-top can flag low cache and correlate it with quota pressure, but does not claim a cache-rate trend unless the source data supports one.
 - Progressive quota depends on local `usage_history`. Auth-broker setups that do not maintain local history may only show the final quota result.
 - `omp-top` depends on OMP's user-facing JSON CLI contracts. If those contracts change incompatibly, `omp-top` may need an update.
 
