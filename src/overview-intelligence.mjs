@@ -40,9 +40,14 @@ function rowCacheRate(row) {
 }
 
 function requestTrend(points, { recentHours = 3, baselineHours = 9 } = {}) {
-  const valid = (points ?? [])
-    .map(point => ({ timestamp: finite(point?.timestamp), requests: Math.max(0, Number(point?.requests || 0)) }))
-    .filter(point => point.timestamp !== undefined)
+  const byTimestamp = new Map();
+  for (const point of points ?? []) {
+    const timestamp = finite(point?.timestamp);
+    if (timestamp === undefined) continue;
+    byTimestamp.set(timestamp, (byTimestamp.get(timestamp) ?? 0) + Math.max(0, Number(point?.requests || 0)));
+  }
+  const valid = [...byTimestamp.entries()]
+    .map(([timestamp, requests]) => ({ timestamp, requests }))
     .sort((a, b) => a.timestamp - b.timestamp);
   if (valid.length < 3) return undefined;
   const latest = valid.at(-1).timestamp;
