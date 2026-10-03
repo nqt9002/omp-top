@@ -214,6 +214,10 @@ const EN = {
   "top.quotaError": "Quota refresh ended with error: {message}",
 
   "time.now": "now",
+  "time.seconds": "{value}s",
+  "time.minutes": "{value}m",
+  "time.hoursMinutes": "{hours}h{minutes}",
+  "time.daysHours": "{days}d{hours}",
   "time.unknown": "unknown",
   "time.resetNow": "reset now",
   "time.resetMinutes": "reset {minutes}m",
@@ -475,6 +479,10 @@ const VI = {
   "top.quotaError": "Làm mới Quota kết thúc với lỗi: {message}",
 
   "time.now": "bây giờ",
+  "time.seconds": "{value}s",
+  "time.minutes": "{value}p",
+  "time.hoursMinutes": "{hours}g{minutes}",
+  "time.daysHours": "{days}n{hours}",
   "time.unknown": "không rõ",
   "time.resetNow": "reset ngay",
   "time.resetMinutes": "reset sau {minutes}p",
