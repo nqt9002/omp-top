@@ -425,14 +425,23 @@ function renderOverview(context, width) {
 
 function intelligenceLine(limit) {
   const intel = limit?.intelligence;
-  if (!intel || (intel.sampleCount ?? 0) < 2 || intel.burnPerHour === undefined) return style.dim(t("quota.collecting"));
-  const burn = formatPercentPerHour(intel.burnPerHour);
-  const eta = intel.status === "exhausted" ? t("time.now") : formatHours(intel.etaHours);
+  const burnValue = Number.isFinite(intel?.recentBurnPerHour) ? intel.recentBurnPerHour : intel?.burnPerHour;
+  if (!intel || (intel.sampleCount ?? 0) < 2 || !Number.isFinite(burnValue)) return style.dim(t("quota.collecting"));
+  const burn = formatPercentPerHour(burnValue);
+  const etaValue = Number.isFinite(intel.recentEtaHours) ? intel.recentEtaHours : intel.etaHours;
+  const eta = intel.status === "exhausted" ? t("time.now") : formatHours(etaValue);
   const sustainable = formatPercentPerHour(intel.sustainablePerHour);
-  const pace = Number.isFinite(intel.paceRatio) ? `${intel.paceRatio.toFixed(2)}×` : "-";
-  const text = t("quota.intelligence", { burn, eta, sustainable, pace });
+  const paceValue = Number.isFinite(intel.recentPaceRatio) ? intel.recentPaceRatio : intel.paceRatio;
+  const pace = Number.isFinite(paceValue) ? `${paceValue.toFixed(2)}×` : "-";
+  let text = t("quota.intelligence", { burn, eta, sustainable, pace });
+  if (Number.isFinite(intel.baselineBurnPerHour) && Number.isFinite(intel.accelerationRatio)) {
+    text += t("quota.intelligenceTrend", {
+      baseline: formatPercentPerHour(intel.baselineBurnPerHour),
+      ratio: ratioText(intel.accelerationRatio),
+    });
+  }
   if (intel.status === "exhausted" || intel.status === "at-risk") return style.red(text);
-  if (intel.status === "watch") return style.yellow(text);
+  if (intel.status === "watch" || intel.burnTrend === "spike" || intel.burnTrend === "elevated") return style.yellow(text);
   return style.dim(text);
 }
 
