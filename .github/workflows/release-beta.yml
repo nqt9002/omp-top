@@ -1,0 +1,28 @@
+name: Release Beta
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Existing package version on develop, e.g. v0.6.0-beta.1'
+        required: true
+        type: string
+      expected_sha:
+        description: 'Full 40-character develop commit SHA to test and publish'
+        required: true
+        type: string
+      notes:
+        description: 'Checkpoint scope and test evidence (at least 20 characters)'
+        required: true
+        type: string
+permissions:
+  contents: read
+jobs:
+  release:
+    permissions:
+      contents: write
+    uses: ./.github/workflows/release-checked.yml
+    with:
+      channel: beta
+      tag: ${{ inputs.tag }}
+      expected_sha: ${{ inputs.expected_sha }}
+      notes: ${{ inputs.notes }}
