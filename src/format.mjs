@@ -9,6 +9,7 @@ export const style = {
   green: text => ansi("32", text),
   yellow: text => ansi("33", text),
   cyan: text => ansi("36", text),
+  inverse: text => ansi("7", text),
 };
 
 export function stripAnsi(text) { return text.replace(ANSI_RE, ""); }
@@ -56,6 +57,22 @@ export function formatAge(timestamp, now = Date.now()) {
   if (hours < 24) return `${hours}h`;
   return `${Math.floor(hours / 24)}d`;
 }
+export function formatUntil(timestamp, now = Date.now()) {
+  if (!Number.isFinite(timestamp)) return "-";
+  const delta = Number(timestamp) - now;
+  if (delta <= 0) return "now";
+  const sec = Math.ceil(delta / 1000);
+  if (sec < 60) return `${sec}s`;
+  const min = Math.ceil(sec / 60);
+  if (min < 60) return `${min}m`;
+  const hours = Math.floor(min / 60);
+  const remMin = min % 60;
+  if (hours < 24) return `${hours}h${remMin ? ` ${remMin}m` : ""}`;
+  const days = Math.floor(hours / 24);
+  const remHours = hours % 24;
+  return `${days}d${remHours ? ` ${remHours}h` : ""}`;
+}
+
 export function formatReset(resetsAt, now = Date.now()) {
   if (!Number.isFinite(resetsAt)) return "";
   let min = Math.ceil((resetsAt - now) / 60000);
