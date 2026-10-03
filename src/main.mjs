@@ -47,6 +47,13 @@ let options;
 try { options = parseOptions(process.argv.slice(2)); }
 catch (error) { process.stderr.write(`${error.message}\n\n${help()}`); process.exit(2); }
 
+if (options.help) { process.stdout.write(help()); process.exit(0); }
+if (options.version) {
+  const version = await readPackageVersion();
+  process.stdout.write(`omp-top ${version}\n${t("cli.channelLabel")}: ${versionChannel(version)}\n${t("cli.languageLabel")}: ${getLocale()}\n`);
+  process.exit(0);
+}
+
 if (options.command === 'language') {
   try {
     if (options.language) {
@@ -63,13 +70,6 @@ if (options.command === 'language') {
     process.stderr.write(t("language.invalid", { locale: options.language ?? "" }) + "\n");
     process.exit(2);
   }
-}
-
-if (options.help) { process.stdout.write(help()); process.exit(0); }
-if (options.version) {
-  const version = await readPackageVersion();
-  process.stdout.write(`omp-top ${version}\nchannel: ${versionChannel(version)}\nlanguage: ${getLocale()}\n`);
-  process.exit(0);
 }
 
 try {
