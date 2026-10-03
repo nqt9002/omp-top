@@ -2,6 +2,7 @@ import { aggregateCacheByProvider, cacheRate, sortModels } from "./stats.mjs";
 import { modelPerformanceRows } from "./intelligence.mjs";
 import { quotaDisplayGroups } from "./quota.mjs";
 import { joinColumns, renderMetricGrid, sectionTitle } from "./layout.mjs";
+import { t } from "./i18n.mjs";
 import {
   style, compactNumber, percent, providerLabel, usedFraction, quotaColor, cacheColor,
   progressBar, formatReset, formatClock, formatAge, formatDuration, formatMoney,
@@ -9,13 +10,18 @@ import {
 } from "./format.mjs";
 
 export const VIEWS = [
-  { id: "overview", key: "1", label: "Overview", short: "Ov" },
-  { id: "quota", key: "2", label: "Quota", short: "Qu" },
-  { id: "models", key: "3", label: "Models", short: "Mo" },
-  { id: "cache", key: "4", label: "Cache", short: "Ca" },
-  { id: "agents", key: "5", label: "Agents", short: "Ag" },
-  { id: "events", key: "6", label: "Events", short: "Ev" },
+  { id: "overview", key: "1", labelKey: "view.overview", shortKey: "view.overt(view.shortKey)" },
+  { id: "quota", key: "2", labelKey: "view.quota", shortKey: "view.quota.short" },
+  { id: "models", key: "3", labelKey: "view.models", shortKey: "view.models.short" },
+  { id: "cache", key: "4", labelKey: "view.cache", shortKey: "view.cache.short" },
+  { id: "agents", key: "5", labelKey: "view.agents", shortKey: "view.agents.short" },
+  { id: "events", key: "6", labelKey: "view.events", shortKey: "view.events.short" },
 ];
+
+export function viewLabel(viewOrId) {
+  const view = typeof viewOrId === "string" ? VIEWS.find(item => item.id === viewOrId) : viewOrId;
+  return view ? t(t(view.labelKey)Key) : String(viewOrId ?? "");
+}
 
 export function nextViewIndex(index, delta) {
   return (index + delta + VIEWS.length) % VIEWS.length;
@@ -31,12 +37,12 @@ export function renderViewTabs(activeIndex, width) {
   const pieces = VIEWS.map((view, index) => {
     if (compact) {
       return index === activeIndex
-        ? `${style.cyan("▌")}${style.inverse(` ${view.short} `)}`
-        : `${style.dim(view.key)}:${view.short}`;
+        ? `${style.cyan("▌")}${style.inverse(` ${t(view.shortKey)} `)}`
+        : `${style.dim(view.key)}:${t(view.shortKey)}`;
     }
     return index === activeIndex
-      ? `${style.cyan("▌")}${style.inverse(` ${view.label} `)}${style.dim(` ${view.key}`)}`
-      : `${style.dim(view.key)} ${view.label}`;
+      ? `${style.cyan("▌")}${style.inverse(` ${t(view.labelKey)} `)}${style.dim(` ${view.key}`)}`
+      : `${style.dim(view.key)} ${t(view.labelKey)}`;
   });
   return truncateAnsi(pieces.join(compact ? "  " : "   "), width);
 }
