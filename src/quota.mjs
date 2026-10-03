@@ -133,7 +133,7 @@ function limitUsedFraction(limit) {
 }
 
 function antigravityWindowKey(limit) {
-  return String(limit?.scope?.windowId || limit?.window?.id || limit?.window?.label || limit?.id || "default");
+  return String(limit?.scope?.windowId || limit?.window?.label || limit?.window?.id || limit?.id || "default");
 }
 
 function isAntigravitySharedLimit(limit) {
@@ -190,10 +190,13 @@ export function quotaDisplayGroups(report) {
     group.entries.set(key, shared ? mergeSharedDisplayLimit(group.entries.get(key), limit) : limit);
   }
 
-  return [...groups.values()].map(group => ({
-    label: group.label,
-    limits: group.order.map(key => group.entries.get(key)).filter(Boolean),
-  }));
+  const priority = label => /^Gemini$/i.test(label) ? 0 : /\(shared\)/i.test(label) ? 1 : 2;
+  return [...groups.values()]
+    .sort((a, b) => priority(a.label) - priority(b.label) || a.label.localeCompare(b.label))
+    .map(group => ({
+      label: group.label,
+      limits: group.order.map(key => group.entries.get(key)).filter(Boolean),
+    }));
 }
 
 function reportIdentity(report) {
