@@ -151,3 +151,17 @@ test("overview uses wide model space and distinguishes exhausted NOW from future
   assert.ok(wide.includes(longModel));
   assert.match(wide, /API-equivalent cost estimate reported by the current OMP stats snapshot/);
 });
+
+test("compact cache and agent views use stacked fallbacks instead of wide tables", () => {
+  const stats = normalizeStats({
+    overall: { cacheRate: 0.5, totalCacheReadTokens: 1000, totalCacheWriteTokens: 200, cacheSavings: 0.4 },
+    byModel: [{ provider: "openai-codex", model: "gpt-test", totalRequests: 7, totalInputTokens: 100, totalCacheReadTokens: 100, totalCacheWriteTokens: 20, cacheRate: 0.5, cacheSavings: 0.4 }],
+    byAgentType: [{ agentType: "task", totalRequests: 7, totalInputTokens: 100, totalOutputTokens: 30, totalCacheReadTokens: 100, totalCost: 0.2 }],
+  });
+  const cache = stripAnsi(renderView("cache", { stats }, 56).join("\n"));
+  const agents = stripAnsi(renderView("agents", { stats }, 56).join("\n"));
+  assert.match(cache, /OpenAI Codex/);
+  assert.match(cache, /req 7 · hit/);
+  assert.match(agents, /task/);
+  assert.match(agents, /share/);
+});
