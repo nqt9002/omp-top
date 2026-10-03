@@ -390,7 +390,7 @@ function renderAgents(context, width) {
     return lines;
   }
   const totalTokens = rows.reduce((sum, row) => sum + Number(row.totalInputTokens || 0) + Number(row.totalOutputTokens || 0), 0);
-  const nameWidth = width >= 96 ? Math.max(20, width - 55) : 28;
+  const nameWidth = width >= 96 ? Math.max(20, width - 57) : 28;
   lines.push(style.dim(`  ${tableCell("Agent / role", nameWidth)} ${"Req".padStart(7)} ${"Share".padStart(7)} ${"Input".padStart(9)} ${"Output".padStart(9)} ${"Cache".padStart(7)} ${"API est.*".padStart(10)}`));
   for (const row of [...rows].sort((a, b) => Number(b.totalRequests || 0) - Number(a.totalRequests || 0))) {
     const name = tableCell(String(row.agentType ?? row.type ?? "unknown"), nameWidth);
