@@ -229,8 +229,14 @@ function alertCorrelation(alert) {
 function renderAttention(intelligence, width) {
   const lines = [sectionTitle(t("section.attention"), width)];
   if (!intelligence.alerts.length) {
-    lines.push(` ${style.green("✓")} ${style.bold(t("overview.allClear"))}`);
-    lines.push(style.dim(`   ${t("overview.allClearDetail")}`));
+    if (!intelligence.coverage.stats && !intelligence.coverage.quota) {
+      lines.push(` ${style.yellow("↻")} ${t("overview.assessing")}`);
+    } else if (!intelligence.coverage.stats || !intelligence.coverage.quota) {
+      lines.push(` ${style.yellow("◐")} ${t("overview.partial")}`);
+    } else {
+      lines.push(` ${style.green("✓")} ${style.bold(t("overview.allClear"))}`);
+      lines.push(style.dim(`   ${t("overview.allClearDetail")}`));
+    }
     return lines;
   }
 
