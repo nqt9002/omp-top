@@ -344,14 +344,21 @@ function renderCache(context, width) {
   const providers = aggregateCacheByProvider(stats.byModel);
   if (providers.length) {
     lines.push("", sectionTitle("By provider", width));
-    lines.push(style.dim("  Provider                   Req      Hit       Read      Write"));
-    for (const row of providers) {
-      const name = tableCell(providerLabel(row.provider), 24);
-      const req = compactNumber(row.totalRequests).padStart(7);
-      const hit = percent(row.cacheRate).padStart(7);
-      const read = compactNumber(row.totalCacheReadTokens).padStart(9);
-      const write = compactNumber(row.totalCacheWriteTokens).padStart(9);
-      lines.push(`  ${name} ${req} ${cacheColor(row.cacheRate, hit)} ${read} ${write}`);
+    if (width < 68) {
+      for (const row of providers) {
+        lines.push(` ${style.bold(providerLabel(row.provider))}`);
+        lines.push(`   req ${compactNumber(row.totalRequests)} · hit ${percent(row.cacheRate)} · read ${compactNumber(row.totalCacheReadTokens)} · write ${compactNumber(row.totalCacheWriteTokens)}`);
+      }
+    } else {
+      lines.push(style.dim("  Provider                   Req      Hit       Read      Write"));
+      for (const row of providers) {
+        const name = tableCell(providerLabel(row.provider), 24);
+        const req = compactNumber(row.totalRequests).padStart(7);
+        const hit = percent(row.cacheRate).padStart(7);
+        const read = compactNumber(row.totalCacheReadTokens).padStart(9);
+        const write = compactNumber(row.totalCacheWriteTokens).padStart(9);
+        lines.push(`  ${name} ${req} ${cacheColor(row.cacheRate, hit)} ${read} ${write}`);
+      }
     }
   }
 
@@ -389,10 +396,23 @@ function renderAgents(context, width) {
     lines.push(style.dim(" This OMP stats snapshot did not report byAgentType data."));
     return lines;
   }
+  const sorted = [...rows].sort((a, b) => Number(b.totalRequests || 0) - Number(a.totalRequests || 0));
   const totalTokens = rows.reduce((sum, row) => sum + Number(row.totalInputTokens || 0) + Number(row.totalOutputTokens || 0), 0);
-  const nameWidth = width >= 96 ? Math.max(20, width - 57) : 28;
+  if (width < 96) {
+    for (const row of sorted) {
+      const tokens = Number(row.totalInputTokens || 0) + Number(row.totalOutputTokens || 0);
+      const share = percent(totalTokens > 0 ? tokens / totalTokens : 0);
+      const cache = percent(cacheRate(Number(row.totalInputTokens || 0), Number(row.totalCacheReadTokens || 0)));
+      lines.push("", ` ${style.bold(String(row.agentType ?? row.type ?? "unknown"))}`);
+      lines.push(`   req ${compactNumber(Number(row.totalRequests || 0))} · share ${share} · cache ${cache}`);
+      lines.push(style.dim(`   input ${compactNumber(Number(row.totalInputTokens || 0))} · output ${compactNumber(Number(row.totalOutputTokens || 0))} · API est.* ${formatMoney(Number(row.totalCost))}`));
+    }
+    return lines;
+  }
+
+  const nameWidth = Math.max(20, width - 57);
   lines.push(style.dim(`  ${tableCell("Agent / role", nameWidth)} ${"Req".padStart(7)} ${"Share".padStart(7)} ${"Input".padStart(9)} ${"Output".padStart(9)} ${"Cache".padStart(7)} ${"API est.*".padStart(10)}`));
-  for (const row of [...rows].sort((a, b) => Number(b.totalRequests || 0) - Number(a.totalRequests || 0))) {
+  for (const row of sorted) {
     const name = tableCell(String(row.agentType ?? row.type ?? "unknown"), nameWidth);
     const req = compactNumber(Number(row.totalRequests || 0)).padStart(7);
     const tokens = Number(row.totalInputTokens || 0) + Number(row.totalOutputTokens || 0);
