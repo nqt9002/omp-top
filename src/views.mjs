@@ -453,6 +453,10 @@ function renderOverview(context, width) {
   ];
 }
 
+function tableCell(value, width) {
+  return padRight(truncateAnsi(String(value ?? ""), Math.max(1, width)), Math.max(1, width));
+}
+
 function intelligenceLine(limit) {
   const intel = limit?.intelligence;
   const burnValue = Number.isFinite(intel?.recentBurnPerHour) ? intel.recentBurnPerHour : intel?.burnPerHour;
