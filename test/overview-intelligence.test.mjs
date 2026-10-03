@@ -216,3 +216,66 @@ test("Overview renders decision-support evidence in English and Vietnamese", () 
     setLocale(previous);
   }
 });
+
+
+test("capacity summary preserves risk counts and saved reset credits", () => {
+  const now = Date.now();
+  const overview = buildOverviewIntelligence({
+    stats: normalizeStats({ byModel: [] }),
+    quota: {
+      reports: [{
+        provider: "openai-codex",
+        resetCredits: { availableCount: 2 },
+        limits: [
+          {
+            id: "primary",
+            label: "5 Hour",
+            scope: { provider: "openai-codex" },
+            window: { resetsAt: now + 2 * HOUR },
+            amount: { usedFraction: 1 },
+            intelligence: { status: "exhausted", resetsAt: now + 2 * HOUR },
+          },
+          {
+            id: "secondary",
+            label: "Weekly",
+            scope: { provider: "openai-codex" },
+            window: { resetsAt: now + 2 * 24 * HOUR },
+            amount: { usedFraction: 0.85 },
+            intelligence: { status: "at-risk", recentEtaHours: 10, recentProjectedExhaustAt: now + 10 * HOUR },
+          },
+          {
+            id: "watch",
+            label: "Monthly",
+            scope: { provider: "openai-codex" },
+            window: { resetsAt: now + 10 * 24 * HOUR },
+            amount: { usedFraction: 0.7 },
+            intelligence: { status: "watch" },
+          },
+        ],
+      }],
+    },
+    now,
+  });
+  const summary = overview.capacity[0];
+  assert.equal(summary.exhaustedCount, 1);
+  assert.equal(summary.atRiskCount, 1);
+  assert.equal(summary.watchCount, 1);
+  assert.equal(summary.resetCreditsAvailable, 2);
+});
+
+test("incomplete data does not render a false all-clear state", () => {
+  const previous = getLocale();
+  try {
+    setLocale("en");
+    const screen = stripAnsi(renderView("overview", {
+      stats: undefined,
+      statsState: { refreshing: true, startedAt: Date.now() },
+      quota: undefined,
+      events: [],
+    }, 120).join("\n"));
+    assert.match(screen, /Collecting enough data to assess system health/);
+    assert.doesNotMatch(screen, /No actionable anomalies detected/);
+  } finally {
+    setLocale(previous);
+  }
+});
