@@ -23,7 +23,7 @@ export function upgradeDecision(current, target, selection) {
 }
 
 export function parseOptions(argv) {
-  const result = { command: 'run', redact: false, profile: undefined, quotaTimeout: undefined, channel: undefined, tag: undefined, help: false, version: false };
+  const result = { command: 'run', redact: false, profile: undefined, quotaTimeout: undefined, channel: undefined, tag: undefined, language: undefined, help: false, version: false };
   let commandSet = false;
   const seen = new Set();
   const once = name => { if (seen.has(name)) throw new Error(`Duplicate option: ${name}`); seen.add(name); };
@@ -34,10 +34,11 @@ export function parseOptions(argv) {
   };
   for (let i = 0; i < argv.length; i++) {
     const arg = argv[i];
-    if (['run', 'install', 'upgrade', 'uninstall'].includes(arg)) {
+    if (['run', 'install', 'upgrade', 'uninstall', 'language'].includes(arg)) {
       if (commandSet) throw new Error('Choose one command');
       result.command = arg; commandSet = true; continue;
     }
+    if (result.command === 'language' && result.language === undefined && !arg.startsWith('-')) { result.language = arg; continue; }
     if (arg === '--redact') { result.redact = true; continue; }
     if (arg === '--profile') { once(arg); result.profile = valueAt(i++, arg); continue; }
     if (arg === '--quota-timeout') {
@@ -53,5 +54,6 @@ export function parseOptions(argv) {
   }
   upgradeSelection(result); // Validate before any network or filesystem mutation.
   if (result.command !== 'upgrade' && (result.channel !== undefined || result.tag !== undefined)) throw new Error('--channel and --tag are upgrade options');
+  if (result.command !== 'language' && result.language !== undefined) throw new Error('Language value requires the language command');
   return result;
 }
