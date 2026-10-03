@@ -3,6 +3,8 @@ import path from "node:path";
 import fs from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import { createHash } from "node:crypto";
+import { parseVersion, releaseChannel, selectRelease, versionChannel } from "./release-policy.mjs";
+import { upgradeSelection, upgradeDecision } from "./upgrade-options.mjs";
 
 const moduleDir = path.dirname(fileURLToPath(import.meta.url));
 export const packageRoot = path.dirname(moduleDir);
@@ -11,8 +13,16 @@ export const defaultBinDir = path.join(os.homedir(), ".local", "bin");
 
 export async function readPackageVersion(root = packageRoot) {
   try {
+    const manifest = JSON.parse(await fs.readFile(path.join(root, "release-manifest.json"), "utf8"));
+    if (typeof manifest.version === "string" && manifest.version.trim()) return manifest.version.trim();
+  } catch {}
+  try {
     const pkg = JSON.parse(await fs.readFile(path.join(root, "package.json"), "utf8"));
-    return String(pkg.version || "unknown");
+    const version = String(pkg.version || "unknown");
+    // Source checkouts carry only the release line. beta.0 means "unpublished
+    // source for this line"; published artifacts get an exact generated manifest.
+    if (pkg.releaseChannel === "beta" && versionChannel(version) === "stable") return `${version}-beta.0`;
+    return version;
   } catch { return "unknown"; }
 }
 
@@ -46,7 +56,7 @@ export async function installSelf({ sourceRoot = packageRoot } = {}) {
   await fs.rm(temp, { recursive: true, force: true });
   await fs.mkdir(temp, { recursive: true });
   await fs.cp(path.join(sourceRoot, "src"), path.join(temp, "src"), { recursive: true });
-  for (const file of ["package.json", "README.md", "LICENSE"]) await copyIfExists(path.join(sourceRoot, file), path.join(temp, file));
+  for (const file of ["package.json", "release-manifest.json", "README.md", "LICENSE"]) await copyIfExists(path.join(sourceRoot, file), path.join(temp, file));
   await fs.mkdir(path.dirname(installDir), { recursive: true });
   await fs.rm(installDir, { recursive: true, force: true });
   await fs.rename(temp, installDir);
@@ -70,11 +80,7 @@ export const DEFAULT_GITHUB_REPO = "nqt9002/omp-top";
 const MAX_RELEASE_BYTES = 20 * 1024 * 1024;
 
 export function versionFromReleaseTag(tag) {
-  const value = String(tag || "").trim();
-  if (!/^v?\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?$/.test(value)) {
-    throw new Error("Invalid GitHub release tag: " + (value || "(empty)"));
-  }
-  return value.replace(/^v/, "");
+  return parseVersion(String(tag || "").trim()).version;
 }
 
 export function releaseAssetNames(tag) {
@@ -105,25 +111,50 @@ function githubHeaders() {
 }
 
 async function fetchGithubJson(url) {
-  const response = await fetch(url, { headers: githubHeaders(), redirect: "follow" });
+  const response = await fetch(url, { headers: githubHeaders(), redirect: "follow", signal: AbortSignal.timeout(15000) });
   if (!response.ok) {
     let detail = "";
     try { detail = (await response.json())?.message || ""; } catch {}
-    throw new Error("GitHub API HTTP " + response.status + (detail ? ": " + detail : ""));
+    const error = new Error("GitHub API HTTP " + response.status + (detail ? ": " + detail : ""));
+    error.status = response.status;
+    throw error;
   }
   return response.json();
 }
 
-export async function resolveGithubRelease({ tag, prerelease = false } = {}) {
+export async function resolveGithubRelease(options = {}, { fetchJson = fetchGithubJson } = {}) {
+  const selection = upgradeSelection(options);
   const base = "https://api.github.com/repos/" + githubRepo() + "/releases";
-  if (tag) return fetchGithubJson(base + "/tags/" + encodeURIComponent(tag));
-  if (prerelease) {
-    const releases = await fetchGithubJson(base + "?per_page=30");
-    const match = Array.isArray(releases) ? releases.find(release => release && release.prerelease && !release.draft) : undefined;
-    if (!match) throw new Error("No GitHub prerelease is available");
-    return match;
+  if (selection.tag) {
+    const release = await fetchJson(base + "/tags/" + encodeURIComponent(selection.tag));
+    const expectedPrerelease = selection.channel !== 'stable';
+    if (!release || release.draft || release.tag_name !== selection.tag || release.prerelease !== expectedPrerelease) {
+      throw new Error('Exact release tag or prerelease flag does not match the request');
+    }
+    return release;
   }
-  return fetchGithubJson(base + "/latest");
+  if (selection.channel === 'stable') {
+    try {
+      const latest = await fetchJson(base + '/latest');
+      if (releaseChannel(latest) !== 'stable') throw new Error('GitHub Latest is not a valid stable release');
+      return latest;
+    } catch (error) {
+      if (error?.status !== 404) throw error;
+      // Some repositories do not designate Latest; use the validated list instead.
+    }
+  }
+  const releases = [];
+  for (let page = 1; page <= 20; page++) {
+    const batch = await fetchJson(base + '?per_page=100&page=' + page);
+    if (!Array.isArray(batch)) throw new Error('GitHub did not return a release list');
+    releases.push(...batch);
+    if (batch.length < 100) {
+      const selected = selectRelease(releases, selection.channel);
+      if (!selected) throw new Error('No published ' + selection.channel + ' release is available; installation unchanged');
+      return selected;
+    }
+  }
+  throw new Error('Release pagination limit reached; choose an exact --tag instead');
 }
 
 async function downloadAsset(asset) {
@@ -174,16 +205,19 @@ async function extractVerifiedRelease(archiveBytes, expectedSha, names) {
   return { tempDir, sourceRoot: path.join(tempDir, names.root) };
 }
 
-export async function upgradeSelf({ tag, prerelease = false } = {}) {
-  const release = await resolveGithubRelease({ tag, prerelease });
+export async function upgradeSelf(options = {}) {
+  const selection = upgradeSelection(options);
+  const release = await resolveGithubRelease(options);
   if (!release || release.draft) throw new Error("GitHub returned an invalid/draft release");
 
   const names = releaseAssetNames(release.tag_name);
   const current = await readPackageVersion();
-  if (current === names.version) {
-    process.stdout.write("omp-top " + current + " is already up to date (" + release.tag_name + ").\n");
-    return { updated: false, version: current, tag: release.tag_name };
+  const decision = upgradeDecision(current, names.version, selection);
+  if (!decision.update) {
+    process.stdout.write(decision.message + "\n");
+    return { updated: false, version: current, channel: versionChannel(current), tag: release.tag_name };
   }
+  if (decision.switching) process.stdout.write("Switching from beta to stable " + names.version + " (explicit channel request).\n");
 
   const assets = Array.isArray(release.assets) ? release.assets : [];
   const archiveAsset = assets.find(asset => asset?.name === names.archive);
@@ -200,7 +234,7 @@ export async function upgradeSelf({ tag, prerelease = false } = {}) {
     if (packagedVersion !== names.version) throw new Error("Release tag/package version mismatch");
     const installed = await installSelf({ sourceRoot: extracted.sourceRoot });
     process.stdout.write("Upgraded omp-top " + current + " -> " + installed.version + " from GitHub Releases.\n");
-    return { updated: true, version: installed.version, tag: release.tag_name };
+    return { updated: true, version: installed.version, channel: versionChannel(installed.version), tag: release.tag_name };
   } finally {
     await fs.rm(extracted.tempDir, { recursive: true, force: true });
   }
