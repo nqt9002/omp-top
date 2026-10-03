@@ -52,27 +52,29 @@ export function formatClock(timestamp) {
 export function formatAge(timestamp, now = Date.now()) {
   if (!timestamp) return t("time.unknown");
   const sec = Math.max(0, Math.round((now - timestamp) / 1000));
-  if (sec < 60) return `${sec}s`;
+  if (sec < 60) return t("time.seconds", { value: sec });
   const min = Math.floor(sec / 60);
-  if (min < 60) return `${min}m`;
+  if (min < 60) return t("time.minutes", { value: min });
   const hours = Math.floor(min / 60);
-  if (hours < 24) return `${hours}h`;
-  return `${Math.floor(hours / 24)}d`;
+  if (hours < 24) return t("time.hoursMinutes", { hours, minutes: "" });
+  return t("time.daysHours", { days: Math.floor(hours / 24), hours: "" });
 }
 export function formatUntil(timestamp, now = Date.now()) {
   if (!Number.isFinite(timestamp)) return "-";
   const delta = Number(timestamp) - now;
   if (delta <= 0) return t("time.now");
   const sec = Math.ceil(delta / 1000);
-  if (sec < 60) return `${sec}s`;
+  if (sec < 60) return t("time.seconds", { value: sec });
   const min = Math.ceil(sec / 60);
-  if (min < 60) return `${min}m`;
+  if (min < 60) return t("time.minutes", { value: min });
   const hours = Math.floor(min / 60);
   const remMin = min % 60;
-  if (hours < 24) return `${hours}h${remMin ? ` ${remMin}m` : ""}`;
+  if (hours < 24) {
+    return t("time.hoursMinutes", { hours, minutes: remMin ? ` ${t("time.minutes", { value: remMin })}` : "" });
+  }
   const days = Math.floor(hours / 24);
   const remHours = hours % 24;
-  return `${days}d${remHours ? ` ${remHours}h` : ""}`;
+  return t("time.daysHours", { days, hours: remHours ? ` ${t("time.hoursMinutes", { hours: remHours, minutes: "" })}` : "" });
 }
 
 export function formatReset(resetsAt, now = Date.now()) {
@@ -99,9 +101,16 @@ export function formatMoney(value) {
 }
 export function formatHours(hours) {
   if (!Number.isFinite(hours)) return "-";
-  if (hours < 1) return `${Math.max(1, Math.round(hours * 60))}m`;
-  if (hours < 24) return `${hours.toFixed(hours < 10 ? 1 : 0)}h`;
-  return `${(hours / 24).toFixed(hours < 72 ? 1 : 0)}d`;
+  const totalMinutes = Math.max(1, Math.round(hours * 60));
+  if (totalMinutes < 60) return t("time.minutes", { value: totalMinutes });
+  const wholeHours = Math.floor(totalMinutes / 60);
+  const minutes = totalMinutes % 60;
+  if (wholeHours < 24) {
+    return t("time.hoursMinutes", { hours: wholeHours, minutes: minutes ? ` ${t("time.minutes", { value: minutes })}` : "" });
+  }
+  const days = Math.floor(wholeHours / 24);
+  const remHours = wholeHours % 24;
+  return t("time.daysHours", { days, hours: remHours ? ` ${t("time.hoursMinutes", { hours: remHours, minutes: "" })}` : "" });
 }
 export function formatPercentPerHour(fraction) {
   if (!Number.isFinite(fraction)) return "-";
