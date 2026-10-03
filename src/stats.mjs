@@ -1,9 +1,12 @@
+const ARRAY_KEYS = ["byModel", "byFolder", "byAgentType", "timeSeries", "modelSeries", "modelPerformanceSeries", "costSeries"];
+
 export function normalizeStats(value) {
   const stats = value && typeof value === "object" ? value : {};
-  return {
+  const normalized = {
     overall: stats.overall && typeof stats.overall === "object" ? stats.overall : {},
-    byModel: Array.isArray(stats.byModel) ? stats.byModel : [],
   };
+  for (const key of ARRAY_KEYS) normalized[key] = Array.isArray(stats[key]) ? stats[key] : [];
+  return normalized;
 }
 
 export function cacheRate(input, cacheRead) {
