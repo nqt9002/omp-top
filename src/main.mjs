@@ -1,23 +1,7 @@
 #!/usr/bin/env bun
 import { installSelf, uninstallSelf, upgradeSelf, readPackageVersion } from "./self.mjs";
-
-function parse(argv) {
-  const result = { command: "run", redact: false, profile: undefined, quotaTimeout: undefined, tag: undefined, prerelease: false, help: false, version: false };
-  let commandSet = false;
-  for (let i = 0; i < argv.length; i++) {
-    const arg = argv[i];
-    if (!commandSet && ["install", "upgrade", "uninstall", "run"].includes(arg)) { result.command = arg; commandSet = true; continue; }
-    if (arg === "--redact") { result.redact = true; continue; }
-    if (arg === "--profile") { result.profile = argv[++i]; continue; }
-    if (arg === "--quota-timeout") { result.quotaTimeout = argv[++i]; continue; }
-    if (arg === "--tag") { result.tag = argv[++i]; if (!result.tag) throw new Error("--tag requires a GitHub release tag"); continue; }
-    if (arg === "--beta") { result.prerelease = true; continue; }
-    if (arg === "-h" || arg === "--help") { result.help = true; continue; }
-    if (arg === "-v" || arg === "--version") { result.version = true; continue; }
-    throw new Error(`Unknown argument: ${arg}`);
-  }
-  return result;
-}
+import { parseOptions, upgradeSelection } from "./upgrade-options.mjs";
+import { versionChannel } from "./release-policy.mjs";
 
 function help() {
   return `omp-top - zero-dependency terminal monitor for OMP stats/cache/quota
@@ -25,7 +9,7 @@ function help() {
 Usage:
   omp-top [run] [--profile NAME] [--redact] [--quota-timeout MS]
   omp-top install
-  omp-top upgrade [--tag vX.Y.Z | --beta]
+  omp-top upgrade [--channel stable|beta | --tag vX.Y.Z[-beta.N]]
   omp-top uninstall
 
 Commands:
@@ -40,8 +24,12 @@ Monitor options:
   --quota-timeout MS   Optional hard cap for background quota refresh; 0 = none
 
 Upgrade options:
-  --tag TAG            Install one exact GitHub Release tag (for example v0.5.0)
-  --beta               Install the newest GitHub prerelease
+  --channel stable     Latest stable GitHub Release (default)
+  --channel beta       Latest published beta.N GitHub prerelease
+  --tag TAG            Exact published version; permits intentional rollback/recovery
+
+Channel choice applies to this command only and is not sticky.
+To return from beta to stable explicitly: omp-top upgrade --channel stable.
 
 Keys:
   r refresh · ↑/↓/j/k scroll · PgUp/PgDn · Home/End · q/Esc/Ctrl+D/Ctrl+C exit
@@ -49,34 +37,43 @@ Keys:
 }
 
 let options;
-try { options = parse(process.argv.slice(2)); }
+try { options = parseOptions(process.argv.slice(2)); }
 catch (error) { process.stderr.write(`${error instanceof Error ? error.message : String(error)}\n\n${help()}`); process.exit(2); }
 
 if (options.help) { process.stdout.write(help()); process.exit(0); }
-if (options.version) { process.stdout.write(`omp-top ${await readPackageVersion()}\n`); process.exit(0); }
+if (options.version) {
+  const version = await readPackageVersion();
+  process.stdout.write(`omp-top ${version}\nchannel: ${versionChannel(version)}\n`);
+  process.exit(0);
+}
 
-if (options.command === "install") {
-  const result = await installSelf();
-  process.stdout.write(`Installed omp-top ${result.version}\n${result.launcherPath}\n`);
-  if (!String(process.env.PATH || "").split(":").includes(result.launcherPath.replace(/\/omp-top$/, ""))) {
-    process.stdout.write(`\nAdd ~/.local/bin to PATH if needed:\n  export PATH="$HOME/.local/bin:$PATH"\n`);
+try {
+  if (options.command === "install") {
+    const result = await installSelf();
+    process.stdout.write(`Installed omp-top ${result.version} (${versionChannel(result.version)})\n${result.launcherPath}\n`);
+    if (!String(process.env.PATH || "").split(":").includes(result.launcherPath.replace(/\/omp-top$/, ""))) {
+      process.stdout.write(`\nAdd ~/.local/bin to PATH if needed:\n  export PATH="$HOME/.local/bin:$PATH"\n`);
+    }
+    process.exit(0);
   }
-  process.exit(0);
-}
-if (options.command === "uninstall") {
-  const result = await uninstallSelf();
-  process.stdout.write(`Removed omp-top from ${result.installDir}\n`);
-  process.exit(0);
-}
-if (options.command === "upgrade") {
-  process.stdout.write(`Checking GitHub Releases for an omp-top upgrade…\n`);
-  try { await upgradeSelf({ tag: options.tag, prerelease: options.prerelease }); }
-  catch (error) { process.stderr.write(`${error instanceof Error ? error.message : String(error)}\n`); process.exit(1); }
-  process.exit(0);
+  if (options.command === "uninstall") {
+    const result = await uninstallSelf();
+    process.stdout.write(`Removed omp-top from ${result.installDir}\n`);
+    process.exit(0);
+  }
+  if (options.command === "upgrade") {
+    const selection = upgradeSelection(options);
+    process.stdout.write(`Checking GitHub Releases (${selection.tag || selection.channel})…\n`);
+    await upgradeSelf(options);
+    process.exit(0);
+  }
+} catch (error) {
+  process.stderr.write(`${error instanceof Error ? error.message : String(error)}\n`);
+  process.exit(1);
 }
 
 if (options.profile?.trim()) process.env.OMP_PROFILE = options.profile.trim();
-if (options.quotaTimeout?.trim()) process.env.OMP_TOP_QUOTA_HARD_TIMEOUT_MS = options.quotaTimeout.trim();
+if (options.quotaTimeout !== undefined) process.env.OMP_TOP_QUOTA_HARD_TIMEOUT_MS = options.quotaTimeout;
 
 if (!process.stdin?.isTTY || !process.stdout?.isTTY) {
   process.stderr.write("omp-top monitor requires an interactive TTY.\n");
