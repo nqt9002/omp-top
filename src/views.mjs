@@ -213,14 +213,14 @@ function renderTopModels(stats, width) {
     for (const row of rows) {
       const label = `${providerLabel(row.provider)}/${row.model}`;
       lines.push(` ${truncateAnsi(label, Math.max(18, width - 2))}`);
-      lines.push(style.dim(`   ${compactNumber(row.totalRequests)} req · ${percent(row.errorRate)} err · ${Number.isFinite(row.avgTokensPerSecond) ? row.avgTokensPerSecond.toFixed(1) : "-"} TPS · ${formatDuration(row.avgTtft)} TTFT`));
+      lines.push(style.dim(`   ${compactNumber(row.totalRequests)} ${t("common.req")} · ${percent(row.errorRate)} ${t("common.err")} · ${Number.isFinite(row.avgTokensPerSecond) ? row.avgTokensPerSecond.toFixed(1) : "-"} TPS · ${formatDuration(row.avgTtft)} TTFT`));
     }
     return lines;
   }
 
   const providerWidth = width >= 132 ? 20 : 16;
   const modelWidth = Math.max(18, width - providerWidth - 47);
-  lines.push(style.dim(`  ${tableCell("Provider", providerWidth)} ${tableCell("Model", modelWidth)} ${"Req".padStart(7)} ${"Err".padStart(7)} ${"TPS".padStart(7)} ${"TTFT".padStart(8)} ${"API est.*".padStart(10)}`));
+  lines.push(style.dim(`  ${tableCell(t("metric.provider"), providerWidth)} ${tableCell(t("metric.model"), modelWidth)} ${t("metric.req").padStart(7)} ${t("metric.err").padStart(7)} ${t("metric.tps").padStart(7)} ${t("metric.ttft").padStart(8)} ${t("metric.apiEst").padStart(10)}`));
   for (const row of rows) {
     const req = compactNumber(row.totalRequests).padStart(7);
     const err = percent(row.errorRate).padStart(7);
@@ -314,15 +314,15 @@ function renderModels(context, width) {
   if (width < 96) {
     for (const row of rows) {
       lines.push("", ` ${style.bold(providerLabel(row.provider))} · ${row.model}`);
-      lines.push(`   req ${compactNumber(row.totalRequests)} · err ${percent(row.errorRate)} · TTFT ${formatDuration(row.avgTtft)} · TPS ${Number.isFinite(row.avgTokensPerSecond) ? row.avgTokensPerSecond.toFixed(1) : "-"}`);
-      lines.push(style.dim(`   latency ${formatDuration(row.avgDuration)} · API est.* ${formatMoney(row.totalCost)}`));
+      lines.push(`   ${t("common.req")} ${compactNumber(row.totalRequests)} · ${t("common.err")} ${percent(row.errorRate)} · TTFT ${formatDuration(row.avgTtft)} · TPS ${Number.isFinite(row.avgTokensPerSecond) ? row.avgTokensPerSecond.toFixed(1) : "-"}`);
+      lines.push(style.dim(`   ${t("common.latency")} ${formatDuration(row.avgDuration)} · ${t("metric.apiEst")} ${formatMoney(row.totalCost)}`));
     }
     return lines;
   }
 
   const providerWidth = width >= 132 ? 20 : 16;
   const modelWidth = Math.max(18, width - providerWidth - 56);
-  lines.push(style.dim(`  ${tableCell("Provider", providerWidth)} ${tableCell("Model", modelWidth)} ${"Req".padStart(7)} ${"Err".padStart(7)} ${"TTFT".padStart(8)} ${"TPS".padStart(7)} ${"Latency".padStart(8)} ${"API est.*".padStart(10)}`));
+  lines.push(style.dim(`  ${tableCell(t("metric.provider"), providerWidth)} ${tableCell(t("metric.model"), modelWidth)} ${t("metric.req").padStart(7)} ${t("metric.err").padStart(7)} ${t("metric.ttft").padStart(8)} ${t("metric.tps").padStart(7)} ${t("metric.latency").padStart(8)} ${t("metric.apiEst").padStart(10)}`));
   for (const row of rows) {
     const req = compactNumber(row.totalRequests).padStart(7);
     const err = percent(row.errorRate).padStart(7);
@@ -353,10 +353,10 @@ function renderCache(context, width) {
     if (width < 68) {
       for (const row of providers) {
         lines.push(` ${style.bold(providerLabel(row.provider))}`);
-        lines.push(`   req ${compactNumber(row.totalRequests)} · hit ${percent(row.cacheRate)} · read ${compactNumber(row.totalCacheReadTokens)} · write ${compactNumber(row.totalCacheWriteTokens)}`);
+        lines.push(`   ${t("common.req")} ${compactNumber(row.totalRequests)} · ${t("common.hit")} ${percent(row.cacheRate)} · ${t("common.read")} ${compactNumber(row.totalCacheReadTokens)} · ${t("common.write")} ${compactNumber(row.totalCacheWriteTokens)}`);
       }
     } else {
-      lines.push(style.dim("  Provider                   Req      Hit       Read      Write"));
+      lines.push(style.dim(`  ${tableCell(t("metric.provider"), 24)} ${t("metric.req").padStart(7)} ${t("metric.hit").padStart(7)} ${t("metric.read").padStart(9)} ${t("metric.write").padStart(9)}`));
       for (const row of providers) {
         const name = tableCell(providerLabel(row.provider), 24);
         const req = compactNumber(row.totalRequests).padStart(7);
@@ -375,12 +375,12 @@ function renderCache(context, width) {
       for (const row of models) {
         const rate = Number(row.cacheRate || 0);
         lines.push(` ${providerLabel(String(row.provider ?? "unknown"))}/${String(row.model ?? "unknown")}`);
-        lines.push(`   req ${compactNumber(Number(row.totalRequests || 0))} · hit ${percent(rate)} · read ${compactNumber(Number(row.totalCacheReadTokens || 0))} · write ${compactNumber(Number(row.totalCacheWriteTokens || 0))}`);
+        lines.push(`   ${t("common.req")} ${compactNumber(Number(row.totalRequests || 0))} · ${t("common.hit")} ${percent(rate)} · ${t("common.read")} ${compactNumber(Number(row.totalCacheReadTokens || 0))} · ${t("common.write")} ${compactNumber(Number(row.totalCacheWriteTokens || 0))}`);
       }
     } else {
       const providerWidth = width >= 132 ? 20 : 16;
       const modelWidth = Math.max(18, width - providerWidth - 47);
-      lines.push(style.dim(`  ${tableCell("Provider", providerWidth)} ${tableCell("Model", modelWidth)} ${"Req".padStart(7)} ${"Hit".padStart(7)} ${"Read".padStart(8)} ${"Write".padStart(8)} ${"Save".padStart(7)}`));
+      lines.push(style.dim(`  ${tableCell(t("metric.provider"), providerWidth)} ${tableCell(t("metric.model"), modelWidth)} ${t("metric.req").padStart(7)} ${t("metric.hit").padStart(7)} ${t("metric.read").padStart(8)} ${t("metric.write").padStart(8)} ${t("metric.save").padStart(7)}`));
       for (const row of models) {
         const rate = Number(row.cacheRate || 0);
         const req = compactNumber(Number(row.totalRequests || 0)).padStart(7);
@@ -410,14 +410,14 @@ function renderAgents(context, width) {
       const share = percent(totalTokens > 0 ? tokens / totalTokens : 0);
       const cache = percent(cacheRate(Number(row.totalInputTokens || 0), Number(row.totalCacheReadTokens || 0)));
       lines.push("", ` ${style.bold(String(row.agentType ?? row.type ?? "unknown"))}`);
-      lines.push(`   req ${compactNumber(Number(row.totalRequests || 0))} · share ${share} · cache ${cache}`);
-      lines.push(style.dim(`   input ${compactNumber(Number(row.totalInputTokens || 0))} · output ${compactNumber(Number(row.totalOutputTokens || 0))} · API est.* ${formatMoney(Number(row.totalCost))}`));
+      lines.push(`   ${t("common.req")} ${compactNumber(Number(row.totalRequests || 0))} · ${t("common.share")} ${share} · ${t("common.cache")} ${cache}`);
+      lines.push(style.dim(`   ${t("common.input")} ${compactNumber(Number(row.totalInputTokens || 0))} · ${t("common.output")} ${compactNumber(Number(row.totalOutputTokens || 0))} · ${t("metric.apiEst")} ${formatMoney(Number(row.totalCost))}`));
     }
     return lines;
   }
 
   const nameWidth = Math.max(20, width - 57);
-  lines.push(style.dim(`  ${tableCell("Agent / role", nameWidth)} ${"Req".padStart(7)} ${"Share".padStart(7)} ${"Input".padStart(9)} ${"Output".padStart(9)} ${"Cache".padStart(7)} ${"API est.*".padStart(10)}`));
+  lines.push(style.dim(`  ${tableCell(t("metric.agentRole"), nameWidth)} ${t("metric.req").padStart(7)} ${t("metric.share").padStart(7)} ${t("metric.input").padStart(9)} ${t("metric.output").padStart(9)} ${t("view.cache").padStart(7)} ${t("metric.apiEst").padStart(10)}`));
   for (const row of sorted) {
     const name = tableCell(String(row.agentType ?? row.type ?? "unknown"), nameWidth);
     const req = compactNumber(Number(row.totalRequests || 0)).padStart(7);
