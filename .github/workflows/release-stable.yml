@@ -1,29 +1,39 @@
 name: Release Stable
 on:
+  push:
+    branches: [main]
+    paths:
+      - 'src/**'
+      - 'package.json'
+      - 'install.sh'
+      - 'uninstall.sh'
+      - 'scripts/release.mjs'
+      - '.github/workflows/release-stable.yml'
+      - '.github/workflows/release-checked.yml'
   workflow_dispatch:
     inputs:
       tag:
-        description: 'Committed stable package version on main, e.g. v0.6.0'
-        required: true
+        description: 'Optional exact recovery tag; stable normally resolves to v<release-line>'
+        required: false
         type: string
       expected_sha:
-        description: 'Full 40-character main commit SHA to test and publish'
-        required: true
+        description: 'Optional pinned main SHA; defaults to the selected workflow ref SHA'
+        required: false
         type: string
       tested_beta:
-        description: 'Published/dogfooded beta tag with the same runtime (required except hotfix)'
+        description: 'Optional tested beta override; normally latest published beta of the same release line is selected'
         required: false
         type: string
       hotfix_issue:
-        description: 'Emergency exception: tracking issue number, next patch only; mutually exclusive with tested_beta'
+        description: 'Emergency exception: tracking issue number, next patch only; mutually exclusive with tested beta'
         required: false
         type: string
       notes:
-        description: 'Beta test result, or explicit hotfix justification (at least 20 characters)'
-        required: true
+        description: 'Optional promotion evidence; an automatic note is used for merge-triggered stable releases'
+        required: false
         type: string
       confirm:
-        description: 'I reviewed the release PR and approve publication to stable users'
+        description: 'Required only for manual recovery publication'
         required: true
         type: boolean
         default: false
@@ -36,9 +46,9 @@ jobs:
     uses: ./.github/workflows/release-checked.yml
     with:
       channel: stable
-      tag: ${{ inputs.tag }}
-      expected_sha: ${{ inputs.expected_sha }}
-      notes: ${{ inputs.notes }}
-      tested_beta: ${{ inputs.tested_beta }}
-      hotfix_issue: ${{ inputs.hotfix_issue }}
-      confirmed: ${{ inputs.confirm }}
+      tag: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || '' }}
+      expected_sha: ${{ github.event_name == 'workflow_dispatch' && inputs.expected_sha || github.sha }}
+      notes: ${{ github.event_name == 'workflow_dispatch' && inputs.notes || 'Automatic stable publication after an accepted merge to main; promotion still requires a tested beta of the same runtime and release line.' }}
+      tested_beta: ${{ github.event_name == 'workflow_dispatch' && inputs.tested_beta || '' }}
+      hotfix_issue: ${{ github.event_name == 'workflow_dispatch' && inputs.hotfix_issue || '' }}
+      confirmed: ${{ github.event_name == 'push' || inputs.confirm }}
