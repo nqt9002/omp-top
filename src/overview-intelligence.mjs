@@ -501,6 +501,12 @@ export function buildOverviewIntelligence({ stats, quota, events = [], now = Dat
   alerts.sort((a, b) => b.score - a.score || String(a.kind).localeCompare(String(b.kind)));
 
   return {
+    coverage: {
+      stats: Boolean(stats),
+      quota: quotaRows.length > 0,
+      agents: (stats?.byAgentType ?? []).length > 0,
+      events: (events ?? []).length > 0,
+    },
     alerts: alerts.slice(0, 5),
     capacity,
     reliability,
