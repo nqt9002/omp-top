@@ -379,7 +379,7 @@ export function buildOverviewIntelligence({ stats, quota, events = [], now = Dat
     const cacheLow = summary.modelFacts?.cacheSupported && Number.isFinite(cacheRateValue) && cacheRateValue < 0.5;
     const requestTrendRatio = summary.modelFacts?.requestTrend?.ratio;
     const workloadElevated = Number.isFinite(requestTrendRatio) && requestTrendRatio >= 1.5;
-    const burnAccelerated = row.burnTrend === "spike" || row.burnTrend === "elevated" || (Number.isFinite(row.accelerationRatio) && row.accelerationRatio >= 1.5);
+    const burnAccelerated = Number.isFinite(row.accelerationRatio) && row.accelerationRatio >= 1.5;
     const correlation = {
       cacheLow,
       cacheRate: cacheRateValue,
