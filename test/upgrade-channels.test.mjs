@@ -7,15 +7,14 @@ import { parseOptions, upgradeSelection, upgradeDecision } from '../src/upgrade-
 import { resolveGithubRelease, releaseAssetNames } from '../src/self.mjs';
 const item = (tag, prerelease = false, draft = false) => ({ tag_name: tag, prerelease, draft });
 
-test('default stable, explicit beta and legacy alias', () => {
+test('default stable and explicit beta channel', () => {
   assert.deepEqual(upgradeSelection(), { tag: undefined, channel: 'stable', explicit: false });
   assert.equal(upgradeSelection(parseOptions(['upgrade', '--channel', 'beta'])).channel, 'beta');
-  assert.equal(upgradeSelection(parseOptions(['upgrade', '--beta'])).channel, 'beta');
   assert.equal(upgradeSelection(parseOptions(['upgrade', '--tag', 'v0.6.0-beta.1'])).tag, 'v0.6.0-beta.1');
 });
 for (const args of [
   ['upgrade', '--channel', 'edge'], ['upgrade', '--channel'], ['upgrade', '--channel', '--tag'],
-  ['upgrade', '--tag', 'v0.6.0', '--channel', 'stable'], ['upgrade', '--channel', 'beta', '--beta'],
+  ['upgrade', '--tag', 'v0.6.0', '--channel', 'stable'], ['upgrade', '--beta'],
   ['upgrade', '--beta', '--tag', 'v0.6.0-beta.1'], ['upgrade', '--tag', 'latest'],
   ['--profile'], ['--quota-timeout', 'NaN'], ['upgrade', '--channel', 'stable', '--channel', 'beta'],
   ['run', '--channel', 'stable'], ['install', 'upgrade'],
