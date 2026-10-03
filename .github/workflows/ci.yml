@@ -1,18 +1,46 @@
 name: CI
-
 on:
   push:
-    branches: [main]
+    branches: [main, develop]
   pull_request:
-
+    branches: [main, develop]
+    types: [opened, synchronize, reopened, edited, ready_for_review]
+permissions:
+  contents: read
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
 jobs:
+  policy:
+    name: PR policy
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - run: node scripts/pr-policy.mjs
   test:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
       - uses: oven-sh/setup-bun@v2
         with:
           bun-version: latest
-      - name: Parse/build every runtime module
-        run: bun build src/main.mjs src/top.mjs src/quota.mjs src/omp.mjs src/tui.mjs src/self.mjs src/stats.mjs src/json.mjs src/format.mjs --target=bun --outdir=/tmp/omp-top-build
+      - name: Parse every runtime and workflow script
+        run: |
+          for file in src/*.mjs scripts/*.mjs test/*.mjs; do node --check "$file"; done
+          bun build src/*.mjs --target=bun --outdir="$RUNNER_TEMP/omp-top-build"
       - run: bun test/run.mjs
+      - run: node --test test/*.test.mjs
+      - name: CLI smoke checks (no OMP or credential access)
+        run: |
+          bun src/main.mjs --help
+          bun src/main.mjs --version

@@ -1,0 +1,24 @@
+name: Bug report
+description: Report a reproducible omp-top problem
+title: 'fix: '
+body:
+  - type: input
+    id: version
+    attributes:
+      label: Version and channel
+      description: Output from omp-top --version; also include Bun/OMP and OS versions.
+    validations: {required: true}
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: Reproduction and expected behavior
+    validations: {required: true}
+  - type: textarea
+    id: evidence
+    attributes:
+      label: Sanitized logs or screenshots
+      description: Remove email/account IDs, tokens and private paths before sharing.
+  - type: textarea
+    id: acceptance
+    attributes: {label: Acceptance criteria}
+    validations: {required: true}

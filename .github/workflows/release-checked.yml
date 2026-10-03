@@ -1,0 +1,116 @@
+name: Checked release (reusable)
+on:
+  workflow_call:
+    inputs:
+      channel: {required: true, type: string}
+      tag: {required: true, type: string}
+      expected_sha: {required: true, type: string}
+      notes: {required: true, type: string}
+      tested_beta: {required: false, type: string, default: ''}
+      hotfix_issue: {required: false, type: string, default: ''}
+      confirmed: {required: false, type: boolean, default: false}
+permissions:
+  contents: read
+# Serialize releases, including different tags, to avoid an older stable winning Latest.
+concurrency:
+  group: omp-top-release
+  cancel-in-progress: false
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    outputs:
+      tag: ${{ steps.release.outputs.tag }}
+      sha: ${{ steps.release.outputs.sha }}
+      channel: ${{ steps.release.outputs.channel }}
+    steps:
+      - name: Require deliberate dispatch from main
+        env:
+          CHANNEL: ${{ inputs.channel }}
+          SHA: ${{ inputs.expected_sha }}
+          CONFIRMED: ${{ inputs.confirmed }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$GITHUB_EVENT_NAME" = workflow_dispatch
+          test "$GITHUB_REF" = refs/heads/main
+          [[ "$SHA" =~ ^[0-9a-f]{40}$ ]]
+          [[ "$CHANNEL" = beta || "$CHANNEL" = stable ]]
+          if [[ "$CHANNEL" = stable ]]; then test "$CONFIRMED" = true; fi
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.expected_sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+      - name: Validate branch, tag, version and promotion
+        id: release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_CHANNEL: ${{ inputs.channel }}
+          RELEASE_TAG: ${{ inputs.tag }}
+          EXPECTED_SHA: ${{ inputs.expected_sha }}
+          RELEASE_NOTES: ${{ inputs.notes }}
+          TESTED_BETA: ${{ inputs.tested_beta }}
+          HOTFIX_ISSUE: ${{ inputs.hotfix_issue }}
+        run: node scripts/release.mjs validate
+      - name: Validate runtime and run all tests
+        run: |
+          set -euo pipefail
+          for file in src/*.mjs scripts/*.mjs test/*.mjs; do node --check "$file"; done
+          bun build src/*.mjs --target=bun --outdir="$RUNNER_TEMP/omp-top-build"
+          bun test/run.mjs
+          node --test test/*.test.mjs
+      - name: Package committed sources, checksum and smoke test artifact
+        env:
+          TAG: ${{ steps.release.outputs.tag }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          node scripts/release.mjs pack
+          (cd dist && sha256sum -c "omp-top-$TAG.tar.gz.sha256")
+          EXTRACTED="$RUNNER_TEMP/omp-top-release"
+          mkdir -p "$EXTRACTED"
+          tar -xzf "dist/omp-top-$TAG.tar.gz" -C "$EXTRACTED"
+          bun "$EXTRACTED/omp-top-${TAG#v}/src/main.mjs" --help
+          bun "$EXTRACTED/omp-top-${TAG#v}/src/main.mjs" --version
+      - uses: actions/upload-artifact@v4
+        with:
+          name: checked-release
+          path: dist/omp-top-*.tar.gz*
+          if-no-files-found: error
+          retention-days: 7
+  publish:
+    needs: validate
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: checked-release
+          path: dist
+      - name: Publish checked artifact (draft until both assets are uploaded)
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          TAG: ${{ needs.validate.outputs.tag }}
+          SHA: ${{ needs.validate.outputs.sha }}
+          CHANNEL: ${{ needs.validate.outputs.channel }}
+          RELEASE_NOTES: ${{ inputs.notes }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          (cd dist && sha256sum -c "omp-top-$TAG.tar.gz.sha256")
+          printf '%s\n\nSource commit: %s\n' "$RELEASE_NOTES" "$SHA" > notes.md
+          gh release create "$TAG" "dist/omp-top-$TAG.tar.gz" "dist/omp-top-$TAG.tar.gz.sha256" \
+            --repo "$GH_REPO" --target "$SHA" --title "omp-top $TAG" --notes-file notes.md --draft
+          if [[ "$CHANNEL" = beta ]]; then
+            gh release edit "$TAG" --repo "$GH_REPO" --draft=false --prerelease --latest=false
+          else
+            gh release edit "$TAG" --repo "$GH_REPO" --draft=false --prerelease=false --latest
+          fi
