@@ -74,9 +74,9 @@ test("Vietnamese catalog localizes navigation, sections and quota timing", () =>
       byModel: [],
     });
     const screen = stripAnsi(renderView("overview", { stats, statsState: {}, quota: undefined }, 120).join("\n"));
-    assert.match(screen, /TÌNH TRẠNG HỆ THỐNG/);
-    assert.match(screen, /Yêu cầu/);
-    assert.match(screen, /Đang chờ dữ liệu Quota/);
+    assert.match(screen, /CẦN CHÚ Ý/);
+    assert.match(screen, /BỐI CẢNH HỆ THỐNG/);
+    assert.match(screen, /Chưa có dữ liệu Quota/);
   } finally {
     setLocale(previous);
   }
