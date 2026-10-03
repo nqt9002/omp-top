@@ -204,12 +204,21 @@ function providerQuotaSummaries(quotaRows, facts, now) {
       };
     }
 
+    const reports = [...new Set(rows.map(row => row.report).filter(Boolean))];
+    const resetCreditsAvailable = reports.reduce((sum, report) => {
+      const count = finite(report?.resetCredits?.availableCount);
+      return sum + (count && count > 0 ? count : 0);
+    }, 0);
     summaries.push({
       provider,
       worst,
       nextResetAt,
       attribution,
       modelFacts: model,
+      exhaustedCount: rows.filter(row => row.status === "exhausted" || Number(row.usedFraction) >= 1).length,
+      atRiskCount: rows.filter(row => row.status === "at-risk").length,
+      watchCount: rows.filter(row => row.status === "watch").length,
+      resetCreditsAvailable,
       urgency: worst ? quotaUrgency(worst, now) : 0,
     });
   }
