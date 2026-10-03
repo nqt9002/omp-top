@@ -119,6 +119,8 @@ const EN = {
   "common.output": "output",
   "common.latency": "latency",
 
+  "top.profile": "profile {name}",
+  "top.profile": "profile {name}",
   "top.statsFreshness": "stats {stats} · quota {quota}",
   "top.scroll": "scroll {current}/{total}",
   "top.hintsCompact": "1–6 view · Tab switch · r refresh · ↑↓ scroll · q exit",
