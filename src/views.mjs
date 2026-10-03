@@ -118,7 +118,7 @@ function renderSystemHealth(stats, statsState, width) {
   const lines = [sectionTitle("System health", width, state)];
   if (!stats) {
     if (statsState?.refreshing) {
-      lines.push(style.dim(" Syncing OMP session history and calculating the first stats snapshot…"));
+      lines.push(style.dim(" First load may take a while · syncing OMP session history and calculating stats…"));
     } else {
       lines.push(style.dim(" Stats have not been loaded yet."));
     }
