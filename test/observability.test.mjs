@@ -82,7 +82,7 @@ test("view helpers support direct keys and circular navigation", () => {
 
 test("model view renders performance columns and narrow fallback", () => {
   const stats = normalizeStats({ byModel: [{ provider: "openai-codex", model: "gpt-test", totalRequests: 7, errorRate: 0.1, avgTtft: 250, avgDuration: 1000, avgTokensPerSecond: 42, totalCost: 1.25 }] });
-  const wide = stripAnsi(renderView("models", { stats }, 112).join("\n"));
+  const wide = stripAnsi(renderView("models", { stats }, 156).join("\n"));
   const narrow = stripAnsi(renderView("models", { stats }, 60).join("\n"));
   assert.match(wide, /MODEL PERFORMANCE/);
   assert.match(wide, /TTFT/);
@@ -100,21 +100,54 @@ test("app switches views with number, Tab and Shift+Tab without treating Shift+T
   app.handleInput("2");
   assert.match(stripAnsi(app.render(112, 28).join("\n")), /QUOTA \/ RUNWAY/);
   app.handleInput(Keys.shiftTab);
-  assert.match(stripAnsi(app.render(112, 28).join("\n")), /REQUEST \/ CACHE/);
+  assert.match(stripAnsi(app.render(112, 28).join("\n")), /SYSTEM HEALTH/);
   app.handleInput(Keys.tab);
   assert.match(stripAnsi(app.render(112, 28).join("\n")), /QUOTA \/ RUNWAY/);
   app.dispose();
 });
 
-test("wide and narrow app renders stay within terminal width", () => {
+test("responsive shell stays inside physical width and centers wide workspaces", () => {
   const fakeUi = { rows: 32, start() {}, stop() {}, draw() {} };
-  const app = new OmpTopApp({ version: "0.6.0-beta.1", channel: "beta", ui: fakeUi, deps: {
+  const app = new OmpTopApp({ version: "0.6.0-beta.2", channel: "beta", ui: fakeUi, deps: {
     fetchStats: async () => ({ overall: {}, byModel: [] }), loadHistoricalQuota: async () => ({ payload: undefined }), createQuotaRefresh: () => ({ cancel() {}, run: async () => {} }),
   } });
   for (const width of [60, 112, 220]) {
     const lines = app.render(width, 32);
-    const expected = Math.min(width, 112);
-    assert.ok(lines.every(line => visibleWidth(line) <= expected));
+    assert.equal(lines.length, 32);
+    assert.ok(lines.every(line => visibleWidth(line) <= width));
+    assert.ok(stripAnsi(lines[0]).trimStart().startsWith("╭"));
+    assert.ok(stripAnsi(lines.at(-1)).trimStart().startsWith("╰"));
   }
+  const wide = app.render(220, 32);
+  assert.ok(stripAnsi(wide[0]).startsWith(" ".repeat(30) + "╭"));
+  assert.match(stripAnsi(wide[1]), /▌ Overview/);
+  assert.match(stripAnsi(wide.at(-2)), /1–6 view/);
   app.dispose();
+});
+
+test("overview uses wide model space and distinguishes exhausted NOW from future risk", () => {
+  const longModel = "gemini-3.8-flash-super-long-observability-model-name";
+  const stats = normalizeStats({
+    overall: { totalRequests: 100, cacheRate: 0.66, errorRate: 0.004, avgTtft: 6500, avgDuration: 16000, avgTokensPerSecond: 45.9, totalInputTokens: 1000, totalOutputTokens: 500, totalCost: 12.34 },
+    byModel: [{ provider: "google-antigravity", model: longModel, totalRequests: 90, errorRate: 0, avgTtft: 500, avgTokensPerSecond: 50, totalCost: 10 }],
+    timeSeries: [{ requests: 1, errors: 0 }, { requests: 5, errors: 1 }],
+  });
+  const now = Date.now();
+  const quota = {
+    reports: [{
+      provider: "openai-codex",
+      metadata: { accountId: "a" },
+      limits: [
+        { id: "done", amount: { usedFraction: 1 }, intelligence: { status: "exhausted", projectedExhaustAt: now } },
+        { id: "risk", amount: { usedFraction: 0.8 }, intelligence: { status: "at-risk", projectedExhaustAt: now + 2 * HOUR } },
+      ],
+    }],
+  };
+  const wide = stripAnsi(renderView("overview", { stats, statsState: {}, quota }, 156).join("\n"));
+  assert.match(wide, /SYSTEM HEALTH/);
+  assert.match(wide, /exhausted NOW/);
+  assert.match(wide, /projected exhaustion in/);
+  assert.ok(!wide.includes("Nearest ETA"));
+  assert.ok(wide.includes(longModel));
+  assert.match(wide, /API-equivalent cost estimate reported by the current OMP stats snapshot/);
 });
