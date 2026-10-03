@@ -119,7 +119,13 @@ Install the newest published beta:
 omp-top upgrade --channel beta
 ```
 
-`--beta` remains a compatibility alias for `--channel beta`. Channel selection is per command and is not sticky.
+Channel selection is per command and is not sticky. If upgrading directly from the old v0.5.3 stable build, use the exact-tag command once:
+
+```bash
+omp-top upgrade --tag v0.6.0-beta.1
+```
+
+After that, use `omp-top upgrade --channel beta` for later beta checkpoints.
 
 Release assets are published as:
 
