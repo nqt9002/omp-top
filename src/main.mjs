@@ -29,7 +29,7 @@ Monitor:
   -v, --version        Installed version and channel
   -h, --help           Show help
 
-Keys: r refresh; arrows/j/k scroll; PgUp/PgDn; Home/End; q/Esc/Ctrl+C/Ctrl+D exit
+Keys: 1-6/Tab/Shift+Tab switch views; left/right views; r refresh; arrows/j/k scroll; PgUp/PgDn; Home/End; q/Esc/Ctrl+C/Ctrl+D exit
 `;
 }
 
@@ -70,8 +70,9 @@ if (options.quotaTimeout !== undefined) process.env.OMP_TOP_QUOTA_HARD_TIMEOUT_M
 if (!process.stdin?.isTTY || !process.stdout?.isTTY) {
   process.stderr.write('omp-top monitor requires an interactive TTY.\n'); process.exit(1);
 }
+const version = await readPackageVersion();
 const { OmpTopApp } = await import('./top.mjs');
-const app = new OmpTopApp({ redact: options.redact });
+const app = new OmpTopApp({ redact: options.redact, version, channel: versionChannel(version) });
 const cleanup = () => app.dispose();
 process.once('exit', cleanup);
 try { await app.run(); }
