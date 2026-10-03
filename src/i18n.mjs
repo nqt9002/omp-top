@@ -163,6 +163,7 @@ const EN = {
   "quota.noWindows": "     no quota windows reported",
   "quota.collecting": "history: collecting samples · burn - · ETA -",
   "quota.intelligence": "burn {burn} · ETA {eta} · sustainable {sustainable} · pace {pace}",
+  "quota.intelligenceTrend": " · normal {baseline} · accel {ratio}×",
 
   "models.apiNote": " API est.* is the API-equivalent cost estimate in the current OMP stats snapshot.",
   "models.none": " No per-model statistics reported.",
@@ -415,6 +416,7 @@ const VI = {
   "quota.noWindows": "     không có chu kỳ Quota",
   "quota.collecting": "lịch sử: đang thu thập · tốc độ - · ETA -",
   "quota.intelligence": "tốc độ {burn} · ETA {eta} · bền vững {sustainable} · nhịp {pace}",
+  "quota.intelligenceTrend": " · bình thường {baseline} · tăng tốc {ratio}×",
 
   "models.apiNote": " Ước tính API* là chi phí API tương đương trong snapshot thống kê OMP hiện tại.",
   "models.none": " Không có thống kê theo mô hình.",
