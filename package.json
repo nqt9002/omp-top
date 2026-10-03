@@ -1,6 +1,6 @@
 {
   "name": "omp-top",
-  "version": "0.5.3",
+  "version": "0.5.4",
   "description": "Zero-dependency terminal monitor for Oh My Pi (OMP) stats, cache efficiency, and provider quota.",
   "type": "module",
   "files": [
