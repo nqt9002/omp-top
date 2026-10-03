@@ -11,6 +11,7 @@ A small terminal monitor for **Oh My Pi (OMP)** request/cache statistics and pro
 - Cache breakdown by provider.
 - Cache breakdown by exact model.
 - Provider/account quota.
+- Google Antigravity quota is split into its Gemini pool and the shared Claude/GPT third-party pool.
 - Progressive quota updates: faster providers appear first while slower providers continue refreshing.
 - Last-known quota while a live refresh is still running.
 
@@ -292,7 +293,7 @@ Docs-only changes do not need a version bump.
 
 ## Current version
 
-**v0.5.2**
+**v0.5.3**
 
 ## License
 

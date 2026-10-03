@@ -121,6 +121,84 @@ export function snapshotsToQuota(rows, redact = false) {
   return { generatedAt: generatedAt || undefined, reports };
 }
 
+
+function limitUsedFraction(limit) {
+  const amount = limit?.amount ?? {};
+  if (Number.isFinite(amount.usedFraction)) return Number(amount.usedFraction);
+  if (Number.isFinite(amount.used) && Number.isFinite(amount.limit) && Number(amount.limit) > 0) {
+    return Number(amount.used) / Number(amount.limit);
+  }
+  if (Number.isFinite(amount.remainingFraction)) return Math.max(0, 1 - Number(amount.remainingFraction));
+  return undefined;
+}
+
+function antigravityWindowKey(limit) {
+  return String(limit?.scope?.windowId || limit?.window?.label || limit?.window?.id || limit?.id || "default");
+}
+
+function isAntigravitySharedLimit(limit) {
+  if (limit?.scope?.shared === true || typeof limit?.scope?.sharedGroup === "string") return true;
+  return /\(shared\)/i.test(String(limit?.label || ""));
+}
+
+function mergeSharedDisplayLimit(current, candidate) {
+  if (!current) return candidate;
+  const currentUsed = limitUsedFraction(current);
+  const candidateUsed = limitUsedFraction(candidate);
+  const preferCandidate = candidateUsed !== undefined && (currentUsed === undefined || candidateUsed > currentUsed);
+  const primary = preferCandidate ? candidate : current;
+  const secondary = preferCandidate ? current : candidate;
+  return {
+    ...secondary,
+    ...primary,
+    scope: { ...secondary?.scope, ...primary?.scope },
+    window: (secondary?.window || primary?.window) ? { ...secondary?.window, ...primary?.window } : undefined,
+    amount: { ...secondary?.amount, ...primary?.amount },
+  };
+}
+
+/**
+ * Build quota groups for rendering. Antigravity exposes separate Gemini and
+ * shared Claude/GPT pools. Its shared third-party pool is copied into both
+ * Anthropic and OpenAI routing scopes; render that upstream pool once.
+ */
+export function quotaDisplayGroups(report) {
+  const limits = Array.isArray(report?.limits) ? report.limits : [];
+  if (report?.provider !== "google-antigravity") return [{ label: "", limits }];
+
+  const groups = new Map();
+  for (const limit of limits) {
+    const label = typeof limit?.label === "string" && limit.label.trim() ? limit.label.trim() : "";
+    const groupKey = label || "__unlabeled__";
+    let group = groups.get(groupKey);
+    if (!group) {
+      group = { label, entries: new Map(), order: [] };
+      groups.set(groupKey, group);
+    }
+
+    const windowKey = antigravityWindowKey(limit);
+    const shared = isAntigravitySharedLimit(limit);
+    const sharedIdentity =
+      typeof limit?.scope?.sharedGroup === "string" && limit.scope.sharedGroup
+        ? limit.scope.sharedGroup
+        : shared
+          ? label + ":" + windowKey
+          : undefined;
+    const key = sharedIdentity ? "shared:" + sharedIdentity : "limit:" + String(limit?.id || windowKey);
+
+    if (!group.entries.has(key)) group.order.push(key);
+    group.entries.set(key, shared ? mergeSharedDisplayLimit(group.entries.get(key), limit) : limit);
+  }
+
+  const priority = label => /^Gemini$/i.test(label) ? 0 : /\(shared\)/i.test(label) ? 1 : 2;
+  return [...groups.values()]
+    .sort((a, b) => priority(a.label) - priority(b.label) || a.label.localeCompare(b.label))
+    .map(group => ({
+      label: group.label,
+      limits: group.order.map(key => group.entries.get(key)).filter(Boolean),
+    }));
+}
+
 function reportIdentity(report) {
   const metadata = report?.metadata ?? {};
   for (const key of ["email", "accountId", "projectId", "orgId"]) {
