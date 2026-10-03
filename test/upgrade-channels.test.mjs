@@ -66,7 +66,8 @@ test('older channel versions never silently downgrade', () => {
   assert.equal(upgradeDecision('0.5.3', '0.5.3', upgradeSelection()).update, false);
 });
 test('CLI --version and --help run without importing TUI/OMP credentials', () => {
-  const channel = versionChannel(JSON.parse(readFileSync('package.json', 'utf8')).version);
+  const pkg = JSON.parse(readFileSync('package.json', 'utf8'));
+  const channel = pkg.releaseChannel ?? versionChannel(pkg.version);
   for (const flag of ['--version', '--help']) {
     const result = spawnSync(process.execPath, ['src/main.mjs', flag], { encoding: 'utf8' });
     assert.equal(result.status, 0, result.stderr);
