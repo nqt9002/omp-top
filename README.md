@@ -81,6 +81,37 @@ omp-top --quota-timeout 30000
 | `q` / `Esc` | Exit |
 | `Ctrl+C` / `Ctrl+D` | Exit |
 
+## Language
+
+English is the default UI language. Vietnamese is bundled with the release and can be enabled persistently without installing a separate package:
+
+```bash
+omp-top language vi
+```
+
+Switch back to English:
+
+```bash
+omp-top language en
+```
+
+Show the active language and supported locales:
+
+```bash
+omp-top language
+```
+
+The preference is stored outside the installed release under `$XDG_CONFIG_HOME/omp-top/config.json` or `~/.config/omp-top/config.json`, so upgrading or switching stable/beta does not reset it.
+
+For a one-process override, useful for testing:
+
+```bash
+OMP_TOP_LANG=vi omp-top
+OMP_TOP_LANG=en omp-top
+```
+
+Provider names, model IDs, agent IDs, TTFT/TPS and other technical identifiers are kept unchanged; surrounding labels, statuses, help text and guidance are localized.
+
 ## Upgrade omp-top
 
 Upgrade directly from **GitHub Releases**:
@@ -119,13 +150,14 @@ Install the newest published beta:
 omp-top upgrade --channel beta
 ```
 
-Channel selection is per command and is not sticky. If upgrading directly from the old v0.5.3 stable build, use the exact-tag command once:
+Channel selection is per command and is not sticky. Stable v0.5.4 and newer understand the channel interface directly:
 
 ```bash
-omp-top upgrade --tag v0.6.0-beta.1
+omp-top upgrade --channel beta
+omp-top upgrade --channel stable
 ```
 
-After that, use `omp-top upgrade --channel beta` for later beta checkpoints.
+Exact `--tag` remains available for recovery or intentional rollback.
 
 Release assets are published as:
 
@@ -246,6 +278,7 @@ OMP_TOP_HOME           custom install directory
 OMP_TOP_BIN_DIR        custom launcher directory
 OMP_TOP_GITHUB_TOKEN   optional token for GitHub API rate limits
 OMP_TOP_GITHUB_REPO    alternate release repository for development/testing
+OMP_TOP_LANG           one-process UI locale override: en or vi
 ```
 
 ## Limitations

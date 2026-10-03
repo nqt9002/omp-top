@@ -6,7 +6,8 @@ import { style, providerLabel, formatClock } from "./format.mjs";
 import {
   composeSides, frameBottom, frameDivider, frameRow, frameTop, offsetLine, workspaceGeometry,
 } from "./layout.mjs";
-import { VIEWS, directViewIndex, nextViewIndex, renderView, renderViewTabs } from "./views.mjs";
+import { VIEWS, directViewIndex, nextViewIndex, renderView, renderViewTabs, viewLabel } from "./views.mjs";
+import { t } from "./i18n.mjs";
 
 const STATUS_TTL_MS = 8000;
 const MAX_EVENTS = 60;
@@ -48,7 +49,7 @@ export class OmpTopApp {
 
   async run() {
     this.#ui.start();
-    this.#pushEvent("info", "monitor started");
+    this.#pushEvent("info", t("top.monitorStarted"));
     void this.#bootstrap();
     return this.#done.promise;
   }
@@ -77,11 +78,11 @@ export class OmpTopApp {
           const old = this.#states.get(report.provider);
           this.#states.set(report.provider, { status: "stale", updatedAt: Math.max(old?.updatedAt ?? 0, report.fetchedAt ?? 0) });
         }
-        this.#pushEvent("info", "loaded historical quota snapshot and runway samples");
+        this.#pushEvent("info", t("top.loadedHistory"));
         this.#ui.draw();
       }
     } catch (error) {
-      this.#pushEvent("warn", `historical quota unavailable: ${String(error?.message || error)}`);
+      this.#pushEvent("warn", t("top.historyUnavailable", { message: String(error?.message || error) }));
     }
     void this.refresh();
   }
@@ -93,7 +94,7 @@ export class OmpTopApp {
       this.#statsRefreshing = true;
       this.#statsRefreshStartedAt = Date.now();
       this.#statsError = undefined;
-      this.#pushEvent("info", "stats refresh started");
+      this.#pushEvent("info", t("top.statsRefreshStarted"));
       if (this.#statsPulse) clearInterval(this.#statsPulse);
       this.#statsPulse = setInterval(() => {
         if (!this.#disposed && this.#statsRefreshing) this.#ui.draw();
@@ -104,13 +105,13 @@ export class OmpTopApp {
         this.#snapshot.stats = normalizeStats(raw);
         this.#snapshot.statsUpdatedAt = Date.now();
         this.#statsError = undefined;
-        this.#pushEvent("ok", `stats refreshed · ${this.#snapshot.stats.byModel.length} models`);
-        this.setStatus(this.#quotaRefreshing ? "Stats refreshed · quota continues in background" : "Stats refreshed");
+        this.#pushEvent("ok", t("top.statsRefreshedEvent", { count: this.#snapshot.stats.byModel.length }));
+        this.setStatus(this.#quotaRefreshing ? t("top.statsRefreshedQuotaPending") : t("top.statsRefreshed"));
       }).catch(error => {
         if (!this.#disposed) {
           this.#statsError = String(error?.message || error);
           this.#pushEvent("error", `stats refresh failed: ${this.#statsError}`);
-          this.setStatus(style.yellow(`Stats refresh failed: ${this.#statsError}`));
+          this.setStatus(style.yellow(t("top.statsRefreshFailed", { message: this.#statsError })));
         }
       }).finally(() => {
         this.#statsRefreshing = false;
@@ -129,16 +130,16 @@ export class OmpTopApp {
     for (const [provider, state] of this.#states) this.#states.set(provider, { ...state, status: "refreshing", error: undefined });
     const runner = this.#deps.createQuotaRefresh();
     this.#quotaRun = runner;
-    this.#pushEvent("info", "quota refresh started");
-    this.setStatus("Refreshing quota progressively…");
+    this.#pushEvent("info", t("top.quotaRefreshStarted"));
+    this.setStatus(t("top.quotaRefreshing"));
     void runner.run(this.#redact, {
       onProvider: (provider, reports, updatedAt) => {
         if (this.#disposed || this.#quotaRun !== runner) return;
         this.#snapshot.quota = mergeProviderReports(this.#snapshot.quota, provider, reports);
         this.#snapshot.quotaUpdatedAt = Math.max(this.#snapshot.quotaUpdatedAt ?? 0, updatedAt);
         this.#states.set(provider, { status: "fresh", updatedAt });
-        this.#pushEvent("ok", `${providerLabel(provider)} quota updated`);
-        this.setStatus(`${providerLabel(provider)} quota updated · slower providers still refreshing`);
+        this.#pushEvent("ok", t("top.providerUpdatedEvent", { provider: providerLabel(provider) }));
+        this.setStatus(t("top.providerUpdated", { provider: providerLabel(provider) }));
       },
       onComplete: payload => {
         if (this.#disposed || this.#quotaRun !== runner) return;
@@ -151,14 +152,14 @@ export class OmpTopApp {
           this.#states.set(provider, { status: "fresh", updatedAt });
         }
         for (const [provider, state] of this.#states) if (!live.has(provider) && state.status === "refreshing") this.#states.set(provider, { ...state, status: "stale" });
-        this.#pushEvent("ok", `quota refresh complete · ${live.size} providers`);
-        this.setStatus("Quota refresh complete");
+        this.#pushEvent("ok", t("top.quotaCompleteEvent", { count: live.size }));
+        this.setStatus(t("top.quotaComplete"));
       },
       onError: message => {
         if (this.#disposed || this.#quotaRun !== runner) return;
         for (const [provider, state] of this.#states) if (state.status === "refreshing") this.#states.set(provider, { ...state, status: "error", error: message });
-        this.#pushEvent("error", `quota refresh error: ${message}`);
-        this.setStatus(style.yellow(`Quota refresh ended with error: ${message}`));
+        this.#pushEvent("error", t("top.quotaErrorEvent", { message }));
+        this.setStatus(style.yellow(t("top.quotaError", { message })));
       },
     }).finally(() => {
       if (this.#quotaRun !== runner) return;
@@ -200,11 +201,11 @@ export class OmpTopApp {
     const identity = [style.bold("OMP TOP")];
     if (this.#version) identity.push(`v${this.#version}`);
     if (this.#channel) identity.push(this.#channel);
-    if (process.env.OMP_PROFILE) identity.push(`profile ${process.env.OMP_PROFILE}`);
+    if (process.env.OMP_PROFILE) identity.push(t("top.profile", { name: process.env.OMP_PROFILE }));
     const title = identity.join(style.dim(" · "));
 
     const freshness = workspace.innerWidth >= 120
-      ? style.dim(`stats ${statsTime} · quota ${quotaTime}`)
+      ? style.dim(t("top.statsFreshness", { stats: statsTime, quota: quotaTime }))
       : "";
     const tabs = renderViewTabs(this.#viewIndex, workspace.innerWidth);
     const navLine = composeSides(tabs, freshness, workspace.innerWidth);
@@ -234,14 +235,14 @@ export class OmpTopApp {
 
     const activeStatus = Date.now() - this.#statusAt < STATUS_TTL_MS && this.#status
       ? this.#status
-      : style.dim(`${view.label} · ready`);
+      : style.dim(t("state.ready", { view: viewLabel(view) }));
     const scrollState = maxOffset > 0
-      ? style.dim(`scroll ${this.#scroll + 1}/${maxOffset + 1}`)
-      : style.dim("fit");
+      ? style.dim(t("top.scroll", { current: this.#scroll + 1, total: maxOffset + 1 }))
+      : "";
     const statusLine = composeSides(activeStatus, scrollState, workspace.innerWidth);
     const hints = workspace.mode === "compact"
-      ? "1–6 view · Tab switch · r refresh · ↑↓ scroll · q exit"
-      : "1–6 view · Tab/Shift+Tab/←→ switch · r refresh · ↑↓/j/k scroll · PgUp/PgDn · q/Esc exit";
+      ? t("top.hintsCompact")
+      : t("top.hints");
 
     const framed = [
       frameTop(workspace.width, title),

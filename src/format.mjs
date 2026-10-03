@@ -1,3 +1,5 @@
+import { getIntlLocale, t } from "./i18n.mjs";
+
 const ANSI_RE = /\x1B(?:\[[0-?]*[ -/]*[@-~]|\][^\x07]*(?:\x07|\x1B\\))/g;
 
 export const colorEnabled = process.env.NO_COLOR === undefined;
@@ -36,7 +38,7 @@ export function compactNumber(value) {
   if (abs >= 1e9) return `${(value / 1e9).toFixed(abs >= 10e9 ? 1 : 2)}B`;
   if (abs >= 1e6) return `${(value / 1e6).toFixed(abs >= 10e6 ? 1 : 2)}M`;
   if (abs >= 1e3) return `${(value / 1e3).toFixed(abs >= 10e3 ? 1 : 2)}K`;
-  return Math.round(value).toLocaleString("en-US");
+  return Math.round(value).toLocaleString(getIntlLocale());
 }
 export function percent(fraction) {
   if (!Number.isFinite(fraction)) return "-";
@@ -45,10 +47,10 @@ export function percent(fraction) {
 }
 export function formatClock(timestamp) {
   if (!timestamp) return "-";
-  return new Date(timestamp).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" });
+  return new Date(timestamp).toLocaleTimeString(getIntlLocale(), { hour: "2-digit", minute: "2-digit", second: "2-digit" });
 }
 export function formatAge(timestamp, now = Date.now()) {
-  if (!timestamp) return "unknown";
+  if (!timestamp) return t("time.unknown");
   const sec = Math.max(0, Math.round((now - timestamp) / 1000));
   if (sec < 60) return `${sec}s`;
   const min = Math.floor(sec / 60);
@@ -60,7 +62,7 @@ export function formatAge(timestamp, now = Date.now()) {
 export function formatUntil(timestamp, now = Date.now()) {
   if (!Number.isFinite(timestamp)) return "-";
   const delta = Number(timestamp) - now;
-  if (delta <= 0) return "now";
+  if (delta <= 0) return t("time.now");
   const sec = Math.ceil(delta / 1000);
   if (sec < 60) return `${sec}s`;
   const min = Math.ceil(sec / 60);
@@ -76,12 +78,12 @@ export function formatUntil(timestamp, now = Date.now()) {
 export function formatReset(resetsAt, now = Date.now()) {
   if (!Number.isFinite(resetsAt)) return "";
   let min = Math.ceil((resetsAt - now) / 60000);
-  if (min <= 0) return "reset now";
-  if (min < 60) return `reset ${min}m`;
+  if (min <= 0) return t("time.resetNow");
+  if (min < 60) return t("time.resetMinutes", { minutes: min });
   const h = Math.floor(min / 60); min %= 60;
-  if (h < 24) return `reset ${h}h${min ? ` ${min}m` : ""}`;
+  if (h < 24) return t("time.resetHours", { hours: h, minutes: min ? ` ${min}m` : "" });
   const d = Math.floor(h / 24); const rh = h % 24;
-  return `reset ${d}d${rh ? ` ${rh}h` : ""}`;
+  return t("time.resetDays", { days: d, hours: rh ? ` ${rh}h` : "" });
 }
 export function formatDuration(ms) {
   if (!Number.isFinite(ms)) return "-";

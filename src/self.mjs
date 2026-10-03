@@ -5,6 +5,7 @@ import { fileURLToPath } from "node:url";
 import { createHash } from "node:crypto";
 import { parseVersion, releaseChannel, selectRelease, versionChannel } from "./release-policy.mjs";
 import { upgradeSelection, upgradeDecision } from "./upgrade-options.mjs";
+import { t } from "./i18n.mjs";
 
 const moduleDir = path.dirname(fileURLToPath(import.meta.url));
 export const packageRoot = path.dirname(moduleDir);
@@ -217,14 +218,14 @@ export async function upgradeSelf(options = {}) {
     process.stdout.write(decision.message + "\n");
     return { updated: false, version: current, channel: versionChannel(current), tag: release.tag_name };
   }
-  if (decision.switching) process.stdout.write("Switching from beta to stable " + names.version + " (explicit channel request).\n");
+  if (decision.switching) process.stdout.write(t("upgrade.switchStable", { version: names.version }) + "\n");
 
   const assets = Array.isArray(release.assets) ? release.assets : [];
   const archiveAsset = assets.find(asset => asset?.name === names.archive);
   const checksumAsset = assets.find(asset => asset?.name === names.checksum);
   if (!archiveAsset || !checksumAsset) throw new Error("Release " + release.tag_name + " is missing required archive/checksum assets");
 
-  process.stdout.write("Downloading " + release.tag_name + " from GitHub Releases…\n");
+  process.stdout.write(t("upgrade.downloading", { tag: release.tag_name }) + "\n");
   const [archiveBytes, checksumBytes] = await Promise.all([downloadAsset(archiveAsset), downloadAsset(checksumAsset)]);
   const expectedSha = parseSha256(new TextDecoder().decode(checksumBytes));
   const extracted = await extractVerifiedRelease(archiveBytes, expectedSha, names);
@@ -233,7 +234,7 @@ export async function upgradeSelf(options = {}) {
     const packagedVersion = await readPackageVersion(extracted.sourceRoot);
     if (packagedVersion !== names.version) throw new Error("Release tag/package version mismatch");
     const installed = await installSelf({ sourceRoot: extracted.sourceRoot });
-    process.stdout.write("Upgraded omp-top " + current + " -> " + installed.version + " from GitHub Releases.\n");
+    process.stdout.write(t("upgrade.done", { current, version: installed.version }) + "\n");
     return { updated: true, version: installed.version, channel: versionChannel(installed.version), tag: release.tag_name };
   } finally {
     await fs.rm(extracted.tempDir, { recursive: true, force: true });

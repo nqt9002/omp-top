@@ -2,6 +2,7 @@ import { aggregateCacheByProvider, cacheRate, sortModels } from "./stats.mjs";
 import { modelPerformanceRows } from "./intelligence.mjs";
 import { quotaDisplayGroups } from "./quota.mjs";
 import { joinColumns, renderMetricGrid, sectionTitle } from "./layout.mjs";
+import { t } from "./i18n.mjs";
 import {
   style, compactNumber, percent, providerLabel, usedFraction, quotaColor, cacheColor,
   progressBar, formatReset, formatClock, formatAge, formatDuration, formatMoney,
@@ -9,13 +10,18 @@ import {
 } from "./format.mjs";
 
 export const VIEWS = [
-  { id: "overview", key: "1", label: "Overview", short: "Ov" },
-  { id: "quota", key: "2", label: "Quota", short: "Qu" },
-  { id: "models", key: "3", label: "Models", short: "Mo" },
-  { id: "cache", key: "4", label: "Cache", short: "Ca" },
-  { id: "agents", key: "5", label: "Agents", short: "Ag" },
-  { id: "events", key: "6", label: "Events", short: "Ev" },
+  { id: "overview", key: "1", labelKey: "view.overview", shortKey: "view.overview.short" },
+  { id: "quota", key: "2", labelKey: "view.quota", shortKey: "view.quota.short" },
+  { id: "models", key: "3", labelKey: "view.models", shortKey: "view.models.short" },
+  { id: "cache", key: "4", labelKey: "view.cache", shortKey: "view.cache.short" },
+  { id: "agents", key: "5", labelKey: "view.agents", shortKey: "view.agents.short" },
+  { id: "events", key: "6", labelKey: "view.events", shortKey: "view.events.short" },
 ];
+
+export function viewLabel(viewOrId) {
+  const view = typeof viewOrId === "string" ? VIEWS.find(item => item.id === viewOrId) : viewOrId;
+  return view ? t(view.labelKey) : String(viewOrId ?? "");
+}
 
 export function nextViewIndex(index, delta) {
   return (index + delta + VIEWS.length) % VIEWS.length;
@@ -31,33 +37,33 @@ export function renderViewTabs(activeIndex, width) {
   const pieces = VIEWS.map((view, index) => {
     if (compact) {
       return index === activeIndex
-        ? `${style.cyan("▌")}${style.inverse(` ${view.short} `)}`
-        : `${style.dim(view.key)}:${view.short}`;
+        ? `${style.cyan("▌")}${style.inverse(` ${t(view.shortKey)} `)}`
+        : `${style.dim(view.key)}:${t(view.shortKey)}`;
     }
     return index === activeIndex
-      ? `${style.cyan("▌")}${style.inverse(` ${view.label} `)}${style.dim(` ${view.key}`)}`
-      : `${style.dim(view.key)} ${view.label}`;
+      ? `${style.cyan("▌")}${style.inverse(` ${t(view.labelKey)} `)}${style.dim(` ${view.key}`)}`
+      : `${style.dim(view.key)} ${t(view.labelKey)}`;
   });
   return truncateAnsi(pieces.join(compact ? "  " : "   "), width);
 }
 
 export function statsStateText({ stats, refreshing, startedAt, updatedAt, error, now = Date.now() }) {
   const elapsed = startedAt ? formatAge(startedAt, now) : "0s";
-  if (refreshing && !stats) return style.yellow(`↻ calculating · ${elapsed}`);
-  if (refreshing && stats) return style.yellow(`↻ refreshing · ${elapsed} · previous`);
-  if (error && stats) return style.red("⚠ refresh failed · previous");
-  if (error) return style.red("⚠ unavailable");
-  if (stats && updatedAt) return style.green(`✓ ${formatClock(updatedAt)}`);
-  return style.dim("not loaded");
+  if (refreshing && !stats) return style.yellow(t("state.calculating", { elapsed }));
+  if (refreshing && stats) return style.yellow(t("state.refreshingPrevious", { elapsed }));
+  if (error && stats) return style.red(t("state.refreshFailedPrevious"));
+  if (error) return style.red(t("state.unavailable"));
+  if (stats && updatedAt) return style.green(t("state.fresh", { time: formatClock(updatedAt) }));
+  return style.dim(t("state.notLoaded"));
 }
 
 function providerStateText(state, refreshing) {
-  if (!state) return refreshing ? style.yellow("↻ refreshing") : "";
-  const stamp = state.updatedAt ? ` · ${formatAge(state.updatedAt)} ago` : "";
-  if (state.status === "fresh") return style.green(`✓ fresh${stamp}`);
-  if (state.status === "refreshing") return style.yellow(`↻ refreshing${stamp ? ` · last ${formatClock(state.updatedAt)}` : ""}`);
-  if (state.status === "error") return style.red(`⚠ stale${stamp}`);
-  return style.dim(`stale${stamp}`);
+  if (!state) return refreshing ? style.yellow(t("state.providerRefreshing", { stamp: "" })) : "";
+  const stamp = state.updatedAt ? t("state.ago", { age: formatAge(state.updatedAt) }) : "";
+  if (state.status === "fresh") return style.green(t("state.providerFresh", { stamp }));
+  if (state.status === "refreshing") return style.yellow(t("state.providerRefreshing", { stamp: state.updatedAt ? t("state.last", { time: formatClock(state.updatedAt) }) : "" }));
+  if (state.status === "error") return style.red(t("state.providerStaleError", { stamp }));
+  return style.dim(t("state.providerStale", { stamp }));
 }
 
 function accountLabel(report, fallback) {
@@ -115,12 +121,12 @@ function errorMetric(fraction) {
 
 function renderSystemHealth(stats, statsState, width) {
   const state = statsStateText({ stats, ...statsState });
-  const lines = [sectionTitle("System health", width, state)];
+  const lines = [sectionTitle(t("section.systemHealth"), width, state)];
   if (!stats) {
     if (statsState?.refreshing) {
-      lines.push(style.dim(" First load may take a while · syncing OMP session history and calculating stats…"));
+      lines.push(style.dim(t("overview.firstLoad")));
     } else {
-      lines.push(style.dim(" Stats have not been loaded yet."));
+      lines.push(style.dim(t("overview.statsNotLoaded")));
     }
     return lines;
   }
@@ -128,65 +134,65 @@ function renderSystemHealth(stats, statsState, width) {
   const o = stats.overall ?? {};
   const cacheRateValue = Number(o.cacheRate || 0);
   const metrics = [
-    { label: style.dim("Requests"), value: style.bold(compactNumber(Number(o.totalRequests || 0))) },
-    { label: style.dim("Cache hit"), value: cacheColor(cacheRateValue, percent(cacheRateValue)) },
-    { label: style.dim("Errors"), value: errorMetric(Number(o.errorRate || 0)) },
-    { label: style.dim("Avg TTFT"), value: formatDuration(Number(o.avgTtft)) },
-    { label: style.dim("Avg TPS"), value: Number.isFinite(Number(o.avgTokensPerSecond)) ? Number(o.avgTokensPerSecond).toFixed(1) : "-" },
-    { label: style.dim("Latency"), value: formatDuration(Number(o.avgDuration)) },
-    { label: style.dim("Input"), value: compactNumber(Number(o.totalInputTokens || 0)) },
-    { label: style.dim("Output"), value: compactNumber(Number(o.totalOutputTokens || 0)) },
-    { label: style.dim("API est.*"), value: formatMoney(Number(o.totalCost)) },
+    { label: style.dim(t("metric.requests")), value: style.bold(compactNumber(Number(o.totalRequests || 0))) },
+    { label: style.dim(t("metric.cacheHit")), value: cacheColor(cacheRateValue, percent(cacheRateValue)) },
+    { label: style.dim(t("metric.errors")), value: errorMetric(Number(o.errorRate || 0)) },
+    { label: style.dim(t("metric.avgTtft")), value: formatDuration(Number(o.avgTtft)) },
+    { label: style.dim(t("metric.avgTps")), value: Number.isFinite(Number(o.avgTokensPerSecond)) ? Number(o.avgTokensPerSecond).toFixed(1) : "-" },
+    { label: style.dim(t("metric.latency")), value: formatDuration(Number(o.avgDuration)) },
+    { label: style.dim(t("metric.input")), value: compactNumber(Number(o.totalInputTokens || 0)) },
+    { label: style.dim(t("metric.output")), value: compactNumber(Number(o.totalOutputTokens || 0)) },
+    { label: style.dim(t("metric.apiEstimate")), value: formatMoney(Number(o.totalCost)) },
   ];
   lines.push(...renderMetricGrid(metrics, width));
-  lines.push(style.dim(" * API-equivalent cost estimate reported by the current OMP stats snapshot."));
+  lines.push(style.dim(t("overview.apiEstimateNote")));
   return lines;
 }
 
 function renderQuotaHealth(quota, width) {
   const risk = quotaRiskSummary(quota);
-  const lines = [sectionTitle("Quota health", width)];
+  const lines = [sectionTitle(t("section.quotaHealth"), width)];
   if (!risk.windows) {
-    lines.push(style.dim(" Waiting for quota data…"));
+    lines.push(style.dim(t("overview.waitingQuota")));
     return lines;
   }
 
   lines.push(...renderMetricGrid([
-    { label: style.dim("Windows"), value: String(risk.windows) },
-    { label: style.dim("Exhausted"), value: risk.exhausted ? style.red(String(risk.exhausted)) : "0" },
-    { label: style.dim("At risk"), value: risk.atRisk ? style.red(String(risk.atRisk)) : "0" },
-    { label: style.dim("Watch"), value: risk.watch ? style.yellow(String(risk.watch)) : "0" },
+    { label: style.dim(t("metric.windows")), value: String(risk.windows) },
+    { label: style.dim(t("metric.exhausted")), value: risk.exhausted ? style.red(String(risk.exhausted)) : "0" },
+    { label: style.dim(t("metric.atRisk")), value: risk.atRisk ? style.red(String(risk.atRisk)) : "0" },
+    { label: style.dim(t("metric.watch")), value: risk.watch ? style.yellow(String(risk.watch)) : "0" },
   ], width));
 
   lines.push("");
   if (risk.exhausted) {
-    lines.push(` ${style.red("●")} Immediate   ${style.red(`${risk.exhausted} exhausted NOW`)}`);
+    lines.push(` ${style.red("●")} ${t("metric.immediate")}   ${style.red(t("overview.exhaustedNow", { count: risk.exhausted }))}`);
   } else {
-    lines.push(` ${style.green("●")} Immediate   no exhausted quota windows`);
+    lines.push(` ${style.green("●")} ${t("metric.immediate")}   ${t("overview.noExhausted")}`);
   }
   if (risk.nextProjected) {
-    lines.push(` ${style.yellow("●")} Next risk    projected exhaustion in ${formatUntil(risk.nextProjected)}`);
+    lines.push(` ${style.yellow("●")} ${t("metric.nextRisk")}    ${t("overview.projectedExhaustion", { time: formatUntil(risk.nextProjected) })}`);
   } else if (risk.atRisk) {
-    lines.push(` ${style.yellow("●")} Next risk    at-risk window has insufficient ETA history`);
+    lines.push(` ${style.yellow("●")} ${t("metric.nextRisk")}    ${t("overview.riskNoEta")}`);
   } else {
-    lines.push(` ${style.dim("●")} Next risk    no projected exhaustion before reset`);
+    lines.push(` ${style.dim("●")} ${t("metric.nextRisk")}    ${t("overview.noProjectedRisk")}`);
   }
   return lines;
 }
 
 function renderTraffic(stats, width) {
-  const lines = [sectionTitle("Traffic", width)];
+  const lines = [sectionTitle(t("section.traffic"), width)];
   const series = stats?.timeSeries ?? [];
   if (!series.length) {
-    lines.push(style.dim(" No time-series data in this OMP stats snapshot."));
+    lines.push(style.dim(t("overview.noTimeSeries")));
     return lines;
   }
   const points = Math.max(8, Math.min(48, width - 12));
   const requests = series.map(point => point?.totalRequests ?? point?.requests ?? point?.count ?? 0);
   const errors = series.map(point => point?.failedRequests ?? point?.errors ?? 0);
   lines.push(
-    ` Requests  ${sparkline(requests, points)}`,
-    ` Errors    ${sparkline(errors, points)}`,
+    ` ${t("metric.requests")}  ${sparkline(requests, points)}`,
+    ` ${t("metric.errors")}    ${sparkline(errors, points)}`,
   );
   return lines;
 }
@@ -197,9 +203,9 @@ function tableCell(value, width) {
 
 function renderTopModels(stats, width) {
   const rows = modelPerformanceRows(stats).slice(0, 5);
-  const lines = [sectionTitle("Top models", width)];
+  const lines = [sectionTitle(t("section.topModels"), width)];
   if (!rows.length) {
-    lines.push(style.dim(" No model statistics reported."));
+    lines.push(style.dim(t("overview.noModels")));
     return lines;
   }
 
@@ -207,14 +213,14 @@ function renderTopModels(stats, width) {
     for (const row of rows) {
       const label = `${providerLabel(row.provider)}/${row.model}`;
       lines.push(` ${truncateAnsi(label, Math.max(18, width - 2))}`);
-      lines.push(style.dim(`   ${compactNumber(row.totalRequests)} req · ${percent(row.errorRate)} err · ${Number.isFinite(row.avgTokensPerSecond) ? row.avgTokensPerSecond.toFixed(1) : "-"} TPS · ${formatDuration(row.avgTtft)} TTFT`));
+      lines.push(style.dim(`   ${compactNumber(row.totalRequests)} ${t("common.req")} · ${percent(row.errorRate)} ${t("common.err")} · ${Number.isFinite(row.avgTokensPerSecond) ? row.avgTokensPerSecond.toFixed(1) : "-"} TPS · ${formatDuration(row.avgTtft)} TTFT`));
     }
     return lines;
   }
 
   const providerWidth = width >= 132 ? 20 : 16;
   const modelWidth = Math.max(18, width - providerWidth - 47);
-  lines.push(style.dim(`  ${tableCell("Provider", providerWidth)} ${tableCell("Model", modelWidth)} ${"Req".padStart(7)} ${"Err".padStart(7)} ${"TPS".padStart(7)} ${"TTFT".padStart(8)} ${"API est.*".padStart(10)}`));
+  lines.push(style.dim(`  ${tableCell(t("metric.provider"), providerWidth)} ${tableCell(t("metric.model"), modelWidth)} ${t("metric.req").padStart(7)} ${t("metric.err").padStart(7)} ${t("metric.tps").padStart(7)} ${t("metric.ttft").padStart(8)} ${t("metric.apiEst").padStart(10)}`));
   for (const row of rows) {
     const req = compactNumber(row.totalRequests).padStart(7);
     const err = percent(row.errorRate).padStart(7);
@@ -241,12 +247,12 @@ function renderOverview(context, width) {
 
 function intelligenceLine(limit) {
   const intel = limit?.intelligence;
-  if (!intel || (intel.sampleCount ?? 0) < 2 || intel.burnPerHour === undefined) return style.dim("history: collecting samples · burn - · ETA -");
+  if (!intel || (intel.sampleCount ?? 0) < 2 || intel.burnPerHour === undefined) return style.dim(t("quota.collecting"));
   const burn = formatPercentPerHour(intel.burnPerHour);
-  const eta = intel.status === "exhausted" ? "NOW" : formatHours(intel.etaHours);
+  const eta = intel.status === "exhausted" ? t("time.now") : formatHours(intel.etaHours);
   const sustainable = formatPercentPerHour(intel.sustainablePerHour);
   const pace = Number.isFinite(intel.paceRatio) ? `${intel.paceRatio.toFixed(2)}×` : "-";
-  const text = `burn ${burn} · ETA ${eta} · sustainable ${sustainable} · pace ${pace}`;
+  const text = t("quota.intelligence", { burn, eta, sustainable, pace });
   if (intel.status === "exhausted" || intel.status === "at-risk") return style.red(text);
   if (intel.status === "watch") return style.yellow(text);
   return style.dim(text);
@@ -255,9 +261,9 @@ function intelligenceLine(limit) {
 function renderQuota(context, width) {
   const { quota, providerStates = new Map(), quotaRefreshing } = context;
   const reports = quota?.reports ?? [];
-  const lines = [sectionTitle("Quota / runway", width)];
+  const lines = [sectionTitle(t("section.quotaRunway"), width)];
   if (!reports.length) {
-    lines.push(quotaRefreshing ? style.dim(" Waiting for quota results…") : style.dim(" No quota data available"));
+    lines.push(quotaRefreshing ? style.dim(t("quota.waiting")) : style.dim(t("quota.none")));
     return lines;
   }
   const grouped = new Map();
@@ -272,12 +278,12 @@ function renderQuota(context, width) {
     const state = providerStateText(providerStates.get(provider), quotaRefreshing);
     lines.push(` ${style.bold(providerLabel(provider))}${state ? `  ${state}` : ""}`);
     providerReports.sort((a, b) => accountLabel(a, "").localeCompare(accountLabel(b, ""))).forEach((report, index) => {
-      const identity = accountLabel(report, providerReports.length > 1 ? `Account ${index + 1}` : "Account");
+      const identity = accountLabel(report, providerReports.length > 1 ? `${t("common.account")} ${index + 1}` : t("common.account"));
       const plan = planLabel(report);
       lines.push(`   ${style.cyan(identity)}${plan ? style.dim(` · ${plan}`) : ""}`);
       const groups = quotaDisplayGroups(report);
       const hasLimits = groups.some(group => group.limits.length > 0);
-      if (!hasLimits) { lines.push(style.dim("     no quota windows reported")); return; }
+      if (!hasLimits) { lines.push(style.dim(t("quota.noWindows"))); return; }
       const groupedAntigravity = report.provider === "google-antigravity" && groups.some(group => group.label);
       for (const group of groups) {
         if (groupedAntigravity && group.label) lines.push(`     ${style.bold(group.label)}`);
@@ -302,21 +308,21 @@ function renderQuota(context, width) {
 
 function renderModels(context, width) {
   const rows = modelPerformanceRows(context.stats);
-  const lines = [sectionTitle("Model performance", width)];
-  lines.push(style.dim(" API est.* is the API-equivalent cost estimate in the current OMP stats snapshot."));
-  if (!rows.length) { lines.push(style.dim(" No per-model statistics reported.")); return lines; }
+  const lines = [sectionTitle(t("section.modelPerformance"), width)];
+  lines.push(style.dim(t("models.apiNote")));
+  if (!rows.length) { lines.push(style.dim(t("models.none"))); return lines; }
   if (width < 96) {
     for (const row of rows) {
       lines.push("", ` ${style.bold(providerLabel(row.provider))} · ${row.model}`);
-      lines.push(`   req ${compactNumber(row.totalRequests)} · err ${percent(row.errorRate)} · TTFT ${formatDuration(row.avgTtft)} · TPS ${Number.isFinite(row.avgTokensPerSecond) ? row.avgTokensPerSecond.toFixed(1) : "-"}`);
-      lines.push(style.dim(`   latency ${formatDuration(row.avgDuration)} · API est.* ${formatMoney(row.totalCost)}`));
+      lines.push(`   ${t("common.req")} ${compactNumber(row.totalRequests)} · ${t("common.err")} ${percent(row.errorRate)} · TTFT ${formatDuration(row.avgTtft)} · TPS ${Number.isFinite(row.avgTokensPerSecond) ? row.avgTokensPerSecond.toFixed(1) : "-"}`);
+      lines.push(style.dim(`   ${t("common.latency")} ${formatDuration(row.avgDuration)} · ${t("metric.apiEst")} ${formatMoney(row.totalCost)}`));
     }
     return lines;
   }
 
   const providerWidth = width >= 132 ? 20 : 16;
   const modelWidth = Math.max(18, width - providerWidth - 56);
-  lines.push(style.dim(`  ${tableCell("Provider", providerWidth)} ${tableCell("Model", modelWidth)} ${"Req".padStart(7)} ${"Err".padStart(7)} ${"TTFT".padStart(8)} ${"TPS".padStart(7)} ${"Latency".padStart(8)} ${"API est.*".padStart(10)}`));
+  lines.push(style.dim(`  ${tableCell(t("metric.provider"), providerWidth)} ${tableCell(t("metric.model"), modelWidth)} ${t("metric.req").padStart(7)} ${t("metric.err").padStart(7)} ${t("metric.ttft").padStart(8)} ${t("metric.tps").padStart(7)} ${t("metric.latency").padStart(8)} ${t("metric.apiEst").padStart(10)}`));
   for (const row of rows) {
     const req = compactNumber(row.totalRequests).padStart(7);
     const err = percent(row.errorRate).padStart(7);
@@ -331,26 +337,26 @@ function renderModels(context, width) {
 
 function renderCache(context, width) {
   const stats = context.stats;
-  const lines = [sectionTitle("Cache efficiency", width)];
-  if (!stats) { lines.push(style.dim(" Stats have not been loaded yet.")); return lines; }
+  const lines = [sectionTitle(t("section.cacheEfficiency"), width)];
+  if (!stats) { lines.push(style.dim(t("overview.statsNotLoaded"))); return lines; }
   const o = stats.overall ?? {};
   lines.push(...renderMetricGrid([
-    { label: style.dim("Overall hit"), value: cacheColor(Number(o.cacheRate || 0), percent(Number(o.cacheRate || 0))) },
-    { label: style.dim("Cache read"), value: compactNumber(Number(o.totalCacheReadTokens || 0)) },
-    { label: style.dim("Cache write"), value: compactNumber(Number(o.totalCacheWriteTokens || 0)) },
-    { label: style.dim("Savings"), value: percent(Number(o.cacheSavings || 0)) },
+    { label: style.dim(t("metric.overallHit")), value: cacheColor(Number(o.cacheRate || 0), percent(Number(o.cacheRate || 0))) },
+    { label: style.dim(t("metric.cacheRead")), value: compactNumber(Number(o.totalCacheReadTokens || 0)) },
+    { label: style.dim(t("metric.cacheWrite")), value: compactNumber(Number(o.totalCacheWriteTokens || 0)) },
+    { label: style.dim(t("metric.savings")), value: percent(Number(o.cacheSavings || 0)) },
   ], width));
 
   const providers = aggregateCacheByProvider(stats.byModel);
   if (providers.length) {
-    lines.push("", sectionTitle("By provider", width));
+    lines.push("", sectionTitle(t("section.byProvider"), width));
     if (width < 68) {
       for (const row of providers) {
         lines.push(` ${style.bold(providerLabel(row.provider))}`);
-        lines.push(`   req ${compactNumber(row.totalRequests)} · hit ${percent(row.cacheRate)} · read ${compactNumber(row.totalCacheReadTokens)} · write ${compactNumber(row.totalCacheWriteTokens)}`);
+        lines.push(`   ${t("common.req")} ${compactNumber(row.totalRequests)} · ${t("common.hit")} ${percent(row.cacheRate)} · ${t("common.read")} ${compactNumber(row.totalCacheReadTokens)} · ${t("common.write")} ${compactNumber(row.totalCacheWriteTokens)}`);
       }
     } else {
-      lines.push(style.dim("  Provider                   Req      Hit       Read      Write"));
+      lines.push(style.dim(`  ${tableCell(t("metric.provider"), 24)} ${t("metric.req").padStart(7)} ${t("metric.hit").padStart(7)} ${t("metric.read").padStart(9)} ${t("metric.write").padStart(9)}`));
       for (const row of providers) {
         const name = tableCell(providerLabel(row.provider), 24);
         const req = compactNumber(row.totalRequests).padStart(7);
@@ -364,17 +370,17 @@ function renderCache(context, width) {
 
   const models = sortModels(stats.byModel);
   if (models.length) {
-    lines.push("", sectionTitle("By model", width));
+    lines.push("", sectionTitle(t("section.byModel"), width));
     if (width < 96) {
       for (const row of models) {
         const rate = Number(row.cacheRate || 0);
         lines.push(` ${providerLabel(String(row.provider ?? "unknown"))}/${String(row.model ?? "unknown")}`);
-        lines.push(`   req ${compactNumber(Number(row.totalRequests || 0))} · hit ${percent(rate)} · read ${compactNumber(Number(row.totalCacheReadTokens || 0))} · write ${compactNumber(Number(row.totalCacheWriteTokens || 0))}`);
+        lines.push(`   ${t("common.req")} ${compactNumber(Number(row.totalRequests || 0))} · ${t("common.hit")} ${percent(rate)} · ${t("common.read")} ${compactNumber(Number(row.totalCacheReadTokens || 0))} · ${t("common.write")} ${compactNumber(Number(row.totalCacheWriteTokens || 0))}`);
       }
     } else {
       const providerWidth = width >= 132 ? 20 : 16;
       const modelWidth = Math.max(18, width - providerWidth - 47);
-      lines.push(style.dim(`  ${tableCell("Provider", providerWidth)} ${tableCell("Model", modelWidth)} ${"Req".padStart(7)} ${"Hit".padStart(7)} ${"Read".padStart(8)} ${"Write".padStart(8)} ${"Save".padStart(7)}`));
+      lines.push(style.dim(`  ${tableCell(t("metric.provider"), providerWidth)} ${tableCell(t("metric.model"), modelWidth)} ${t("metric.req").padStart(7)} ${t("metric.hit").padStart(7)} ${t("metric.read").padStart(8)} ${t("metric.write").padStart(8)} ${t("metric.save").padStart(7)}`));
       for (const row of models) {
         const rate = Number(row.cacheRate || 0);
         const req = compactNumber(Number(row.totalRequests || 0)).padStart(7);
@@ -391,9 +397,9 @@ function renderCache(context, width) {
 
 function renderAgents(context, width) {
   const rows = context.stats?.byAgentType ?? [];
-  const lines = [sectionTitle("Agent / role attribution", width)];
+  const lines = [sectionTitle(t("section.agentAttribution"), width)];
   if (!rows.length) {
-    lines.push(style.dim(" This OMP stats snapshot did not report byAgentType data."));
+    lines.push(style.dim(t("agents.none")));
     return lines;
   }
   const sorted = [...rows].sort((a, b) => Number(b.totalRequests || 0) - Number(a.totalRequests || 0));
@@ -404,14 +410,14 @@ function renderAgents(context, width) {
       const share = percent(totalTokens > 0 ? tokens / totalTokens : 0);
       const cache = percent(cacheRate(Number(row.totalInputTokens || 0), Number(row.totalCacheReadTokens || 0)));
       lines.push("", ` ${style.bold(String(row.agentType ?? row.type ?? "unknown"))}`);
-      lines.push(`   req ${compactNumber(Number(row.totalRequests || 0))} · share ${share} · cache ${cache}`);
-      lines.push(style.dim(`   input ${compactNumber(Number(row.totalInputTokens || 0))} · output ${compactNumber(Number(row.totalOutputTokens || 0))} · API est.* ${formatMoney(Number(row.totalCost))}`));
+      lines.push(`   ${t("common.req")} ${compactNumber(Number(row.totalRequests || 0))} · ${t("common.share")} ${share} · ${t("common.cache")} ${cache}`);
+      lines.push(style.dim(`   ${t("common.input")} ${compactNumber(Number(row.totalInputTokens || 0))} · ${t("common.output")} ${compactNumber(Number(row.totalOutputTokens || 0))} · ${t("metric.apiEst")} ${formatMoney(Number(row.totalCost))}`));
     }
     return lines;
   }
 
   const nameWidth = Math.max(20, width - 57);
-  lines.push(style.dim(`  ${tableCell("Agent / role", nameWidth)} ${"Req".padStart(7)} ${"Share".padStart(7)} ${"Input".padStart(9)} ${"Output".padStart(9)} ${"Cache".padStart(7)} ${"API est.*".padStart(10)}`));
+  lines.push(style.dim(`  ${tableCell(t("metric.agentRole"), nameWidth)} ${t("metric.req").padStart(7)} ${t("metric.share").padStart(7)} ${t("metric.input").padStart(9)} ${t("metric.output").padStart(9)} ${t("view.cache").padStart(7)} ${t("metric.apiEst").padStart(10)}`));
   for (const row of sorted) {
     const name = tableCell(String(row.agentType ?? row.type ?? "unknown"), nameWidth);
     const req = compactNumber(Number(row.totalRequests || 0)).padStart(7);
@@ -428,9 +434,9 @@ function renderAgents(context, width) {
 
 function renderEvents(context, width) {
   const events = context.events ?? [];
-  const lines = [sectionTitle("Runtime events", width)];
-  lines.push(style.dim(" In-memory only · newest first · no persistent event log"));
-  if (!events.length) { lines.push(style.dim(" No events yet.")); return lines; }
+  const lines = [sectionTitle(t("section.runtimeEvents"), width)];
+  lines.push(style.dim(t("events.note")));
+  if (!events.length) { lines.push(style.dim(t("events.none"))); return lines; }
   for (const event of [...events].reverse()) {
     const level = String(event.level || "info").toUpperCase().padEnd(5);
     let label = style.dim(level);
