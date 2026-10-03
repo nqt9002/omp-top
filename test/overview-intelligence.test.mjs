@@ -210,7 +210,7 @@ test("Overview renders decision-support evidence in English and Vietnamese", () 
     assert.match(vietnamese, /CẦN CHÚ Ý/);
     assert.match(vietnamese, /Quota OpenAI Codex có thể cạn sau 4g/);
     assert.match(vietnamese, /workload chính của OpenAI Codex là gpt-6-astra/);
-    assert.match(vietnamese, /có thể cùng góp phần/);
+    assert.match(vietnamese, /cả hai đều có thể góp phần/);
     assert.match(vietnamese, /ĐỘ TIN CẬY MÔ HÌNH/);
   } finally {
     setLocale(previous);
