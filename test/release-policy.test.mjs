@@ -1,9 +1,12 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { parseVersion, compareVersions, versionChannel, releaseChannel, selectRelease, validateReleaseInput } from '../src/release-policy.mjs';
+import {
+  parseVersion, compareVersions, versionChannel, releaseChannel, selectRelease,
+  nextBetaTag, selectBetaForLine, validateReleaseInput,
+} from '../src/release-policy.mjs';
 import { validatePromotion } from '../scripts/release.mjs';
 
-const published = (tag, prerelease = false, draft = false) => ({ tag_name: tag, prerelease, draft });
+const published = (tag, prerelease = false, draft = false, target = undefined) => ({ tag_name: tag, prerelease, draft, target_commitish: target });
 test('SemVer compares numeric beta identifiers and ignores build metadata', () => {
   assert.ok(compareVersions('0.6.0-beta.10', '0.6.0-beta.9') > 0);
   assert.ok(compareVersions('0.6.0', '0.6.0-beta.99') > 0);
@@ -28,16 +31,44 @@ test('stable never selects a beta/draft even when it was published later', () =>
   assert.equal(selectRelease([published('v0.5.3')], 'beta'), undefined);
 });
 test('select highest SemVer, not list position or lexical beta sort', () => {
-  const list = [published('v0.6.0-beta.9', true), published('v0.6.0-beta.10', true), published('v0.6.0-rc.1', true)];
+  const list = [published('v0.6.0-beta.9', true), published('v0.6.0-beta.10', true), published('v0.7.0-rc.1', true)];
   assert.equal(selectRelease(list, 'beta').tag_name, 'v0.6.0-beta.10');
   assert.throws(() => selectRelease(list, 'edge'));
 });
-const input = { channel: 'beta', tag: 'v0.6.0-beta.1', version: '0.6.0-beta.1', branch: 'develop', expectedSha: 'a'.repeat(40), actualSha: 'a'.repeat(40) };
-test('release checks channel, source branch, SHA and committed version', () => {
+test('next beta sequence comes from releases and tags, including reserved drafts/orphan tags', () => {
+  const releases = [
+    published('v0.6.0-beta.9', true),
+    published('v0.6.0-beta.10', true, true),
+    published('v0.5.9-beta.99', true),
+  ];
+  assert.equal(nextBetaTag('0.6.0', releases, ['v0.6.0-beta.12', 'v0.7.0-beta.50']), 'v0.6.0-beta.13');
+  assert.equal(nextBetaTag('0.7.0', [], []), 'v0.7.0-beta.1');
+});
+test('stable promotion automatically selects latest published beta for the same line', () => {
+  const list = [published('v0.6.0-beta.2', true), published('v0.6.0-beta.10', true), published('v0.7.0-beta.1', true), published('v0.6.0-beta.11', true, true)];
+  assert.equal(selectBetaForLine(list, '0.6.0').tag_name, 'v0.6.0-beta.10');
+});
+const input = {
+  channel: 'beta', tag: 'v0.6.0-beta.1', releaseLine: '0.6.0', sourceChannel: 'beta',
+  branch: 'develop', expectedSha: 'a'.repeat(40), actualSha: 'a'.repeat(40),
+};
+test('release checks channel, source branch, SHA and release line without using package as beta counter', () => {
   validateReleaseInput(input);
-  for (const override of [{ channel: 'stable' }, { branch: 'main' }, { actualSha: 'b'.repeat(40) }, { tag: 'v0.6.0-beta.2' }, { version: '0.6.0-beta.0', tag: 'v0.6.0-beta.0' }]) {
-    assert.throws(() => validateReleaseInput({ ...input, ...override }));
-  }
+  for (const override of [
+    { channel: 'stable' },
+    { sourceChannel: 'stable' },
+    { branch: 'main' },
+    { actualSha: 'b'.repeat(40) },
+    { tag: 'v0.7.0-beta.1' },
+    { tag: 'v0.6.0-beta.0' },
+    { releaseLine: '0.6.0-beta.1' },
+  ]) assert.throws(() => validateReleaseInput({ ...input, ...override }));
+});
+test('stable release tag exactly matches the configured line', () => {
+  validateReleaseInput({
+    channel: 'stable', tag: 'v0.6.0', releaseLine: '0.6.0', sourceChannel: 'stable',
+    branch: 'main', expectedSha: 'a'.repeat(40), actualSha: 'a'.repeat(40),
+  });
 });
 test('stable promotion requires a published beta of the same core', () => {
   const input = { candidate: published('v0.6.0-beta.2', true), version: '0.6.0', notes: 'Dogfood passed on macOS with live quota refresh.' };

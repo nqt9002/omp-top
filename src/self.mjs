@@ -13,8 +13,16 @@ export const defaultBinDir = path.join(os.homedir(), ".local", "bin");
 
 export async function readPackageVersion(root = packageRoot) {
   try {
+    const manifest = JSON.parse(await fs.readFile(path.join(root, "release-manifest.json"), "utf8"));
+    if (typeof manifest.version === "string" && manifest.version.trim()) return manifest.version.trim();
+  } catch {}
+  try {
     const pkg = JSON.parse(await fs.readFile(path.join(root, "package.json"), "utf8"));
-    return String(pkg.version || "unknown");
+    const version = String(pkg.version || "unknown");
+    // Source checkouts carry only the release line. beta.0 means "unpublished
+    // source for this line"; published artifacts get an exact generated manifest.
+    if (pkg.releaseChannel === "beta" && versionChannel(version) === "stable") return `${version}-beta.0`;
+    return version;
   } catch { return "unknown"; }
 }
 
@@ -48,7 +56,7 @@ export async function installSelf({ sourceRoot = packageRoot } = {}) {
   await fs.rm(temp, { recursive: true, force: true });
   await fs.mkdir(temp, { recursive: true });
   await fs.cp(path.join(sourceRoot, "src"), path.join(temp, "src"), { recursive: true });
-  for (const file of ["package.json", "README.md", "LICENSE"]) await copyIfExists(path.join(sourceRoot, file), path.join(temp, file));
+  for (const file of ["package.json", "release-manifest.json", "README.md", "LICENSE"]) await copyIfExists(path.join(sourceRoot, file), path.join(temp, file));
   await fs.mkdir(path.dirname(installDir), { recursive: true });
   await fs.rm(installDir, { recursive: true, force: true });
   await fs.rename(temp, installDir);

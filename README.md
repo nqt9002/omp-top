@@ -9,11 +9,14 @@ A small terminal monitor for **Oh My Pi (OMP)** request/cache statistics and pro
 - Overall request and token usage.
 - Cache hit rate, cache read/write tokens, and cache savings.
 - Cache breakdown by provider.
-- Cache breakdown by exact model.
-- Provider/account quota.
+- Multi-view TUI: Overview, Quota, Models, Cache, Agents, and Events.
+- Cache breakdown by provider and exact model.
+- Model performance when OMP reports it: errors, TTFT, latency, tokens/sec, and API-equivalent cost.
+- Provider/account quota with burn rate, exhaustion ETA, sustainable pace, and reset-aware risk state.
 - Google Antigravity quota is split into its Gemini pool and the shared Claude/GPT third-party pool.
 - Progressive quota updates: faster providers appear first while slower providers continue refreshing.
 - Last-known quota while a live refresh is still running.
+- In-memory runtime event feed for refresh progress and failures.
 
 ## Requirements
 
@@ -68,8 +71,11 @@ omp-top --quota-timeout 30000
 
 | Key | Action |
 | --- | --- |
+| `1`–`6` | Open Overview / Quota / Models / Cache / Agents / Events |
+| `Tab`, `→` | Next view |
+| `Shift+Tab`, `←` | Previous view |
 | `r` | Refresh stats and quota |
-| `↑` / `↓`, `j` / `k` | Scroll |
+| `↑` / `↓`, `j` / `k` | Scroll current view |
 | `PgUp` / `PgDn` | Page scroll |
 | `Home` / `End` | Jump to top/bottom |
 | `q` / `Esc` | Exit |
@@ -107,11 +113,13 @@ Install one exact release:
 omp-top upgrade --tag v0.5.1
 ```
 
-Install the newest prerelease:
+Install the newest published beta:
 
 ```bash
-omp-top upgrade --beta
+omp-top upgrade --channel beta
 ```
+
+`--beta` remains a compatibility alias for `--channel beta`. Channel selection is per command and is not sticky.
 
 Release assets are published as:
 
@@ -279,21 +287,46 @@ Bug fixes and features should link their PR with `Fixes #<issue>`.
 
 ### Releases
 
-Runtime releases are versioned in `package.json`.
+`main` is the stable branch and `develop` is the beta/integration branch.
 
-When a new version reaches `main`, GitHub Actions:
+`package.json.version` stores the **release line** only, for example `0.6.0`. It is not used as a beta counter. The source channel is declared separately.
 
-1. validates all runtime modules;
-2. runs the test suite;
-3. creates the GitHub Release/tag `vX.Y.Z` when that version does not already exist;
-4. builds the release archive;
-5. publishes the archive and SHA256 asset to GitHub Releases.
+For beta releases:
 
-Docs-only changes do not need a version bump.
+```text
+accepted PR → develop
+        ↓
+checked-release tests
+        ↓
+scan existing releases + Git tags for 0.6.0-beta.N
+        ↓
+publish the next sequence
+v0.6.0-beta.1 → beta.2 → beta.3 → ...
+```
 
-## Current version
+The numeric suffix counts **published beta checkpoints**, not commits or PR numbers. Draft releases and existing tags reserve their sequence so tags are never reused.
 
-**v0.5.3**
+For stable releases:
+
+```text
+tested beta
+    ↓
+release PR / approved promotion → main
+    ↓
+verify the tested beta has the same release line and runtime
+    ↓
+publish v0.6.0 as the stable/Latest release
+```
+
+Each release reruns runtime validation and tests, packages only tracked release files, generates an exact `release-manifest.json` inside the archive, verifies SHA256, smoke-tests the packaged CLI, and only then publishes the GitHub Release. Re-running a source commit that was already released is idempotent.
+
+`workflow_dispatch` remains available as a recovery/admin path; normal beta and stable publishing is driven by accepted merges to their channel branches.
+
+Docs-only changes do not need a release-line change.
+
+## Current development line
+
+**0.6.0 · beta**
 
 ## License
 
