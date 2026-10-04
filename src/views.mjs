@@ -790,14 +790,20 @@ function renderQuota(context, width) {
         group.limits.forEach((limit, limitIndex) => {
           const fraction = usedFraction(limit.amount ?? {});
           const title = titles[limitIndex];
-          const label = tableCell(title, labelWidth);
           const bar = progressBar(fraction, barWidth);
           const pct = percent(fraction).padStart(6);
           const reset = formatReset(limit.window?.resetsAt).padStart(13);
-          lines.push(`${indent}${label} ${bar} ${quotaColor(fraction, pct)} ${reset}`.trimEnd());
+          const compactQuota = width < 90;
+          if (compactQuota) {
+            lines.push(`${indent}${truncateAnsi(title, Math.max(12, width - visibleWidth(indent)))}`);
+            lines.push(`${indent}  ${bar} ${quotaColor(fraction, pct)} ${reset}`.trimEnd());
+          } else {
+            const label = tableCell(title, labelWidth);
+            lines.push(`${indent}${label} ${bar} ${quotaColor(fraction, pct)} ${reset}`.trimEnd());
+          }
 
           const amountDetail = quotaAmountDetail(limit);
-          const detailIndent = `${indent}${" ".repeat(Math.min(labelWidth + 1, 49))}`;
+          const detailIndent = compactQuota ? `${indent}  ` : `${indent}${" ".repeat(Math.min(labelWidth + 1, 49))}`;
           if (amountDetail && String(limit?.amount?.unit || "percent") !== "percent") {
             lines.push(style.dim(`${detailIndent}${amountDetail}`.trimEnd()));
           }
