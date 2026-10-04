@@ -201,3 +201,18 @@ test("Antigravity intentional shared-counter dedupe remains intact", () => {
   assert.equal(groups[0].limits.length, 1);
   assert.equal(groups[0].limits[0].amount.usedFraction, 0.3);
 });
+
+
+test("narrow quota view keeps Fable identity visible instead of reducing it to a generic 7 Day row", () => {
+  setLocale("en");
+  const item = report("anthropic", [
+    limit("anthropic:7d", "Claude 7 Day", "anthropic", { window: window("7d", "7 Day") }),
+    limit("anthropic:7d:fable", "Claude 7 Day (Fable)", "anthropic", {
+      scope: { tier: "fable", windowId: "7d" },
+      window: window("7d", "7 Day"),
+    }),
+  ]);
+  const screen = stripAnsi(renderView("quota", { quota: { reports: [item] }, providerStates: new Map(), quotaRefreshing: false }, 60).join("\n"));
+  assert.match(screen, /Claude 7 Day \(Fable\)/);
+  assert.match(screen, /Claude 7 Day/);
+});
