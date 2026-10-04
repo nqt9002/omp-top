@@ -128,7 +128,7 @@ function quotaLimitNote(note) {
 function resetCreditsText(report) {
   const count = Number(report?.resetCredits?.availableCount || 0);
   if (!(count > 0)) return "";
-  let text = t("quota.savedResets", { count });
+  let text = count === 1 ? t("quota.savedResetOne") : t("quota.savedResets", { count });
   const expiries = (report?.resetCredits?.credits ?? [])
     .map(item => Date.parse(String(item?.expiresAt || "")))
     .filter(Number.isFinite)
