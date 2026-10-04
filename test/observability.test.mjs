@@ -45,6 +45,100 @@ test("quota intelligence is safe with insufficient history", () => {
   assert.equal(intel.status, "unknown");
 });
 
+test("fresh reset cycle drops stale exhausted history intelligence", () => {
+  const t = 1_800_000_000_000;
+  const historical = {
+    reports: [{
+      provider: "anthropic",
+      fetchedAt: t,
+      metadata: { accountId: "a" },
+      limits: [{
+        id: "anthropic:7d",
+        label: "Claude 7 Day",
+        window: { label: "7 Day", resetsAt: t + HOUR },
+        amount: { usedFraction: 1, unit: "percent" },
+        status: "exhausted",
+        intelligence: {
+          usedFraction: 1,
+          remainingFraction: 0,
+          resetsAt: t + HOUR,
+          status: "exhausted",
+          burnPerHour: 0.1,
+          recentBurnPerHour: 0.1,
+        },
+      }],
+    }],
+  };
+  const fresh = {
+    generatedAt: t + 2 * HOUR,
+    reports: [{
+      provider: "anthropic",
+      fetchedAt: t + 2 * HOUR,
+      metadata: { accountId: "a" },
+      limits: [{
+        id: "anthropic:7d",
+        label: "Claude 7 Day",
+        window: { label: "7 Day", resetsAt: t + 8 * 24 * HOUR },
+        amount: { usedFraction: 0, remainingFraction: 1, unit: "percent" },
+        status: "ok",
+      }],
+    }],
+  };
+  const enriched = enrichQuotaPayload(fresh, historical);
+  const limit = enriched.reports[0].limits[0];
+  assert.equal(limit.amount.usedFraction, 0);
+  assert.equal(limit.status, "ok");
+  assert.equal(limit.intelligence, undefined);
+});
+
+test("compatible historical intelligence rebases onto fresh same-cycle usage", () => {
+  const t = 1_800_000_000_000;
+  const reset = t + 10 * HOUR;
+  const historical = {
+    reports: [{
+      provider: "openai-codex",
+      fetchedAt: t,
+      metadata: { accountId: "a" },
+      limits: [{
+        id: "weekly",
+        label: "Weekly",
+        window: { label: "Weekly", resetsAt: reset },
+        amount: { usedFraction: 0.4, unit: "percent" },
+        intelligence: {
+          usedFraction: 0.4,
+          remainingFraction: 0.6,
+          resetsAt: reset,
+          burnPerHour: 0.05,
+          recentBurnPerHour: 0.05,
+          status: "ok",
+        },
+      }],
+    }],
+  };
+  const fresh = {
+    generatedAt: t + HOUR,
+    reports: [{
+      provider: "openai-codex",
+      fetchedAt: t + HOUR,
+      metadata: { accountId: "a" },
+      limits: [{
+        id: "weekly",
+        label: "Weekly",
+        window: { label: "Weekly", resetsAt: reset },
+        amount: { usedFraction: 0.45, remainingFraction: 0.55, unit: "percent" },
+        status: "ok",
+      }],
+    }],
+  };
+  const enriched = enrichQuotaPayload(fresh, historical);
+  const intel = enriched.reports[0].limits[0].intelligence;
+  assert.ok(intel);
+  assert.equal(intel.usedFraction, 0.45);
+  assert.equal(intel.remainingFraction, 0.55);
+  assert.ok(intel.etaHours > 10.9 && intel.etaHours < 11.1);
+  assert.notEqual(intel.status, "exhausted");
+});
+
 test("history intelligence survives enrichment of authoritative final quota", () => {
   const t = 1_800_000_000_000;
   const historical = snapshotsToQuota([
