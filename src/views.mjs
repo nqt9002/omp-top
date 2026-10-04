@@ -76,6 +76,12 @@ function accountLabel(report, fallback) {
   return fallback;
 }
 
+function orgLabel(report) {
+  const metadata = report?.metadata ?? {};
+  const value = metadata.orgName ?? metadata.orgId;
+  return typeof value === "string" && value.trim() ? value.trim() : "";
+}
+
 function planLabel(report) {
   const metadata = report?.metadata ?? {};
   for (const key of ["planType", "currentTierName", "currentTierId", "plan", "tier"]) {
@@ -750,8 +756,9 @@ function renderQuota(context, width) {
     providerReports.sort((a, b) => accountLabel(a, "").localeCompare(accountLabel(b, ""))).forEach((report, index) => {
       const identity = accountLabel(report, providerReports.length > 1 ? `${t("common.account")} ${index + 1}` : t("common.account"));
       const plan = planLabel(report);
+      const org = orgLabel(report);
       const resets = resetCreditsText(report);
-      lines.push(`   ${style.cyan(identity)}${plan ? style.dim(` · ${plan}`) : ""}${resets ? ` · ${style.cyan(resets)}` : ""}`);
+      lines.push(`   ${style.cyan(identity)}${org && org !== identity ? style.dim(` · ${org}`) : ""}${plan ? style.dim(` · ${plan}`) : ""}${resets ? ` · ${style.cyan(resets)}` : ""}`);
 
       const groups = quotaDisplayGroups(report);
       const hasLimits = groups.some(group => group.limits.length > 0);
