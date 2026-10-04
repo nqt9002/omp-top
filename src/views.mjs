@@ -415,17 +415,24 @@ function compactViewTarget(key) {
   return `${key} ${viewLabel(view)}`;
 }
 
+function compactQuotaBucket(alert) {
+  const label = String(alert?.quota?.groupLabel || alert?.quota?.label || "").trim();
+  return label || t("view.quota");
+}
+
 function compactAlertPrimary(alert) {
   const provider = alert.provider ? providerLabel(alert.provider) : "";
   if (alert.kind === "quota-reset-due") {
     return t("overview.compact.quotaResetDue", {
       provider,
+      bucket: compactQuotaBucket(alert),
       used: percent(alert.quota?.usedFraction),
     });
   }
   if (alert.kind === "quota-exhausted") {
     return t("overview.compact.quotaExhausted", {
       provider,
+      bucket: compactQuotaBucket(alert),
       used: percent(alert.quota?.usedFraction),
       reset: Number.isFinite(alert.quota?.resetsAt) ? formatUntil(alert.quota.resetsAt) : "-",
     });
@@ -436,6 +443,7 @@ function compactAlertPrimary(alert) {
       : "";
     return t("overview.compact.quotaRunway", {
       provider,
+      bucket: compactQuotaBucket(alert),
       used: percent(alert.quota?.usedFraction),
       eta: formatHours(alert.quota?.etaHours),
       reset: Number.isFinite(alert.quota?.resetsAt) ? formatUntil(alert.quota.resetsAt) : "-",
@@ -559,23 +567,25 @@ function renderAttention(intelligence, width) {
 function capacityLine(summary) {
   const row = summary.worst;
   const provider = providerLabel(summary.provider);
+  const bucket = String(row?.groupLabel || row?.label || "").trim();
+  const target = bucket ? `${provider} · ${bucket}` : provider;
   const reset = Number.isFinite(row?.resetsAt) ? formatUntil(row.resetsAt) : "-";
   if (!row) return provider;
   if ((row.status === "exhausted" || Number(row.usedFraction) >= 1) && Number.isFinite(row.resetsAt) && row.resetsAt <= Date.now()) {
-    return style.yellow(t("overview.capacity.resetDue", { provider }));
+    return style.yellow(t("overview.capacity.resetDue", { provider: target }));
   }
   if (row.status === "exhausted" || Number(row.usedFraction) >= 1) {
-    return style.red(t("overview.capacity.exhausted", { provider, reset }));
+    return style.red(t("overview.capacity.exhausted", { provider: target, reset }));
   }
   if (row.status === "at-risk") {
     return style.yellow(t("overview.capacity.risk", {
-      provider,
+      provider: target,
       used: percent(row.usedFraction),
       eta: formatHours(row.etaHours),
       reset,
     }));
   }
-  return t("overview.capacity.healthy", { provider, used: percent(row.usedFraction), reset });
+  return t("overview.capacity.healthy", { provider: target, used: percent(row.usedFraction), reset });
 }
 
 function renderCapacity(intelligence, width) {
