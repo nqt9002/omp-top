@@ -58,13 +58,9 @@ export function statsStateText({ stats, refreshing, startedAt, updatedAt, error,
   return style.dim(t("state.notLoaded"));
 }
 
-function providerStateText(state, refreshing, nextAt, now = Date.now()) {
+function providerStateText(state, refreshing) {
   if (!state) return refreshing ? style.yellow(t("state.providerRefreshing")) : "";
-  if (state.status === "fresh") {
-    return style.green(nextAt
-      ? t("state.providerFreshCountdown", { next: formatCountdown(nextAt, now) })
-      : t("state.providerFresh"));
-  }
+  if (state.status === "fresh") return "";
   if (state.status === "refreshing") return style.yellow(t("state.providerRefreshing"));
   if (state.status === "error") return style.red(t("state.providerStaleError"));
   return style.dim(t("state.providerStale"));
@@ -77,12 +73,6 @@ function accountLabel(report, fallback) {
     if (typeof value === "string" && value.trim()) return value.trim();
   }
   return fallback;
-}
-
-function orgLabel(report) {
-  const metadata = report?.metadata ?? {};
-  const value = metadata.orgName ?? metadata.orgId;
-  return typeof value === "string" && value.trim() ? value.trim() : "";
 }
 
 function planLabel(report) {
@@ -155,6 +145,66 @@ function quotaRowTitle(limit, groupLabel = "") {
   const tier = String(limit?.scope?.tier || "").trim();
   if (tier && !title.toLowerCase().includes(tier.toLowerCase())) title += ` (${tier})`;
   return title;
+}
+
+function denseQuotaTitle(limit, groupLabel = "") {
+  if (!groupLabel) return quotaLimitTitle(limit);
+  const windowLabel = String(limit?.window?.label || limit?.scope?.windowId || "").trim();
+  if (windowLabel && windowLabel.toLowerCase() !== "quota window") {
+    return `${groupLabel} ${windowLabel}`;
+  }
+  const semantic = String(limit?.label || "").trim();
+  return semantic && semantic !== groupLabel ? `${groupLabel} ${semantic}` : groupLabel;
+}
+
+function quotaRiskLevel(limit, fraction) {
+  const intel = limit?.intelligence ?? {};
+  const status = String(intel.status ?? limit?.status ?? "");
+  const pace = Number.isFinite(Number(intel.recentPaceRatio)) ? Number(intel.recentPaceRatio) : Number(intel.paceRatio);
+  const accel = Number(intel.accelerationRatio);
+  if (status === "exhausted" || Number(fraction) >= 1) return "critical";
+  if (status === "at-risk") return "critical";
+  if (status === "watch"
+    || intel.burnTrend === "spike"
+    || intel.burnTrend === "elevated"
+    || (Number.isFinite(pace) && pace >= 0.8)
+    || (Number.isFinite(accel) && accel >= 1.5)
+    || Number(fraction) >= 0.8) return "watch";
+  return "normal";
+}
+
+function quotaIntelligenceInteresting(limit) {
+  const intel = limit?.intelligence;
+  if (!intel || (intel.sampleCount ?? 0) < 2) return false;
+  const status = String(intel.status ?? limit?.status ?? "");
+  const pace = Number.isFinite(Number(intel.recentPaceRatio)) ? Number(intel.recentPaceRatio) : Number(intel.paceRatio);
+  const accel = Number(intel.accelerationRatio);
+  const projected = Number.isFinite(Number(intel.recentProjectedExhaustAt))
+    || Number.isFinite(Number(intel.projectedExhaustAt));
+  return status === "exhausted"
+    || status === "at-risk"
+    || status === "watch"
+    || projected
+    || intel.burnTrend === "spike"
+    || intel.burnTrend === "elevated"
+    || (Number.isFinite(pace) && pace >= 0.8)
+    || (Number.isFinite(accel) && accel >= 1.5);
+}
+
+function denseQuotaBar(fraction, width, risk) {
+  const f = Number.isFinite(fraction) ? Math.max(0, Math.min(1, fraction)) : 0;
+  const fill = Math.round(f * width);
+  const text = `${"█".repeat(fill)}${"░".repeat(width - fill)}`;
+  if (risk === "critical") return style.red(text);
+  if (risk === "watch") return style.yellow(text);
+  return style.dim(text);
+}
+
+function denseQuotaPercent(fraction, risk) {
+  const text = percent(fraction);
+  if (risk === "critical") return style.red(text);
+  if (risk === "watch") return style.yellow(text);
+  return text;
 }
 
 function wrapPlain(text, width) {
@@ -742,7 +792,7 @@ function intelligenceLine(limit, now = Date.now()) {
   const eta = intel.status === "exhausted"
     ? t("time.due")
     : Number.isFinite(projected)
-      ? `↻${formatCountdown(projected, now)}`
+      ? formatCountdown(projected, now)
       : "-";
   const sustainable = formatPercentPerHour(intel.sustainablePerHour);
   const paceValue = Number.isFinite(intel.recentPaceRatio) ? intel.recentPaceRatio : intel.paceRatio;
@@ -760,7 +810,7 @@ function intelligenceLine(limit, now = Date.now()) {
 }
 
 function renderQuota(context, width) {
-  const { quota, providerStates = new Map(), quotaRefreshing, quotaNextAt } = context;
+  const { quota, providerStates = new Map(), quotaRefreshing } = context;
   const now = context.now ?? Date.now();
   const reports = quota?.reports ?? [];
   const lines = [sectionTitle(t("section.quotaRunway"), width)];
@@ -779,63 +829,66 @@ function renderQuota(context, width) {
   for (const provider of [...grouped.keys()].sort((a, b) => providerLabel(a).localeCompare(providerLabel(b)))) {
     const providerReports = grouped.get(provider) ?? [];
     lines.push("");
-    const state = providerStateText(providerStates.get(provider), quotaRefreshing, quotaNextAt, now);
+    const state = providerStateText(providerStates.get(provider), quotaRefreshing);
     lines.push(` ${style.bold(providerLabel(provider))}${state ? `  ${state}` : ""}`);
 
     const providerNotes = [...new Set(providerReports.flatMap(report => report?.notes ?? []).map(quotaProviderNote).filter(Boolean))];
     for (const note of providerNotes) lines.push(style.dim(`   • ${note}`));
 
-    providerReports.sort((a, b) => accountLabel(a, "").localeCompare(accountLabel(b, ""))).forEach((report, index) => {
-      const identity = accountLabel(report, providerReports.length > 1 ? `${t("common.account")} ${index + 1}` : t("common.account"));
-      const plan = planLabel(report);
-      const org = orgLabel(report);
-      const resets = resetCreditsText(report, now);
-      lines.push(`   ${style.cyan(identity)}${org && org !== identity ? style.dim(` · ${org}`) : ""}${plan ? style.dim(` · ${plan}`) : ""}${resets ? ` · ${style.cyan(resets)}` : ""}`);
+    providerReports
+      .sort((a, b) => accountLabel(a, "").localeCompare(accountLabel(b, "")))
+      .forEach((report, index) => {
+        const identity = accountLabel(report, providerReports.length > 1 ? `${t("common.account")} ${index + 1}` : t("common.account"));
+        const plan = planLabel(report);
+        const resets = resetCreditsText(report, now);
+        lines.push(`   ${style.cyan(identity)}${plan ? style.dim(` · ${plan}`) : ""}${resets ? ` · ${style.cyan(resets)}` : ""}`);
 
-      const groups = quotaDisplayGroups(report);
-      const hasLimits = groups.some(group => group.limits.length > 0);
-      if (!hasLimits) {
-        if (!providerNotes.length) lines.push(style.dim(t("quota.noWindows")));
-        return;
-      }
+        const groups = quotaDisplayGroups(report);
+        const hasLimits = groups.some(group => group.limits.length > 0);
+        if (!hasLimits) {
+          if (!providerNotes.length) lines.push(style.dim(t("quota.noWindows")));
+          return;
+        }
 
-      const groupedAntigravity = report.provider === "google-antigravity" && groups.some(group => group.label);
-      for (const group of groups) {
-        if (groupedAntigravity && group.label) lines.push(`     ${style.bold(group.label)}`);
+        const groupedAntigravity = report.provider === "google-antigravity" && groups.some(group => group.label);
+        const rows = groups.flatMap(group => group.limits.map(limit => ({
+          limit,
+          title: denseQuotaTitle(limit, groupedAntigravity ? group.label : ""),
+        })));
 
-        const titles = group.limits.map(limit => quotaRowTitle(limit, groupedAntigravity ? group.label : ""));
-        const maxTitle = Math.max(22, ...titles.map(title => visibleWidth(title)));
-        const labelWidth = Math.max(18, Math.min(groupedAntigravity ? 34 : 48, maxTitle, Math.max(18, width - 66)));
-        const barWidth = Math.max(6, Math.min(20, width - labelWidth - (groupedAntigravity ? 45 : 41)));
-        const indent = groupedAntigravity ? "       " : "     ";
+        const maxTitle = Math.max(18, ...rows.map(row => visibleWidth(row.title)));
+        const labelWidth = Math.max(18, Math.min(42, maxTitle, Math.max(18, width - 58)));
+        const barWidth = Math.max(6, Math.min(16, width - labelWidth - 34));
+        const indent = "     ";
 
-        group.limits.forEach((limit, limitIndex) => {
+        for (const { limit, title } of rows) {
           const fraction = usedFraction(limit.amount ?? {});
-          const title = titles[limitIndex];
-          const bar = progressBar(fraction, barWidth);
-          const pct = percent(fraction).padStart(6);
-          const reset = formatReset(limit.window?.resetsAt, now).padStart(13);
+          const risk = quotaRiskLevel(limit, fraction);
+          const bar = denseQuotaBar(fraction, barWidth, risk);
+          const pct = denseQuotaPercent(fraction, risk).padStart(6);
+          const reset = formatReset(limit.window?.resetsAt, now);
           const compactQuota = width < 90;
+
           if (compactQuota) {
             lines.push(`${indent}${truncateAnsi(title, Math.max(12, width - visibleWidth(indent)))}`);
-            lines.push(`${indent}  ${bar} ${quotaColor(fraction, pct)} ${reset}`.trimEnd());
+            lines.push(`${indent}  ${bar} ${pct} ${reset}`.trimEnd());
           } else {
-            const label = tableCell(title, labelWidth);
-            lines.push(`${indent}${label} ${bar} ${quotaColor(fraction, pct)} ${reset}`.trimEnd());
+            lines.push(`${indent}${tableCell(title, labelWidth)} ${bar} ${pct} ${reset}`.trimEnd());
           }
 
+          const detailIndent = compactQuota ? `${indent}  ` : `${indent}${" ".repeat(Math.min(labelWidth + 1, 43))}`;
           const amountDetail = quotaAmountDetail(limit);
-          const detailIndent = compactQuota ? `${indent}  ` : `${indent}${" ".repeat(Math.min(labelWidth + 1, 49))}`;
           if (amountDetail && String(limit?.amount?.unit || "percent") !== "percent") {
             lines.push(style.dim(`${detailIndent}${amountDetail}`.trimEnd()));
           }
           for (const note of (limit?.notes ?? []).map(quotaLimitNote).filter(Boolean)) {
             lines.push(style.dim(`${detailIndent}• ${note}`.trimEnd()));
           }
-          lines.push(`${detailIndent}${intelligenceLine(limit, now)}`.trimEnd());
-        });
-      }
-    });
+          if (quotaIntelligenceInteresting(limit)) {
+            lines.push(`${detailIndent}${intelligenceLine(limit, now)}`.trimEnd());
+          }
+        }
+      });
   }
   return lines;
 }
