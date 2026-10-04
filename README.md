@@ -256,6 +256,19 @@ Likely contributors such as subagent concentration, one dominant project/session
 
 If `stats.db` is unavailable or its schema changes, omp-top falls back to the normal aggregate cache statistics.
 
+### Quota view density
+
+The Quota tab is anomaly-first:
+
+- a healthy quota bucket normally occupies one line;
+- a second burn/ETA/safe-pace line appears only when the bucket is exhausted, at risk, on watch, or materially accelerating;
+- zero/no-signal intelligence rows are suppressed;
+- Google Antigravity group/window combinations are flattened into dense labels such as `Gemini Weekly` and `Claude & GPT (shared) 5 Hour`;
+- the global quota refresh countdown appears once in the header instead of being repeated per provider;
+- `↻` is reserved for refresh countdowns; quota reset and ETA values remain countdowns without the refresh glyph.
+
+Provider-specific bucket identity and absolute-unit details remain intact.
+
 ### Quota provider coverage
 
 omp-top mirrors the normalized quota buckets emitted by OMP instead of maintaining a separate provider-specific scraper. Semantic `UsageLimit.label` values are preserved, so model/tier/feature counters that share the same time window remain distinguishable.
