@@ -198,7 +198,7 @@ test("Overview renders decision-support evidence in English and Vietnamese", () 
     setLocale("en");
     const english = stripAnsi(renderView("overview", fixture, 156).join("\n"));
     assert.match(english, /ATTENTION/);
-    assert.match(english, /OpenAI Codex quota 80%/);
+    assert.match(english, /OpenAI Codex · Weekly · 80%/);
     assert.match(english, /→ shift work · 2 Quota/);
     assert.doesNotMatch(english, /workload attribution/);
     assert.match(english, /claude-sonnet-5-5/);
@@ -207,7 +207,7 @@ test("Overview renders decision-support evidence in English and Vietnamese", () 
     setLocale("vi");
     const vietnamese = stripAnsi(renderView("overview", fixture, 156).join("\n"));
     assert.match(vietnamese, /CẦN CHÚ Ý/);
-    assert.match(vietnamese, /OpenAI Codex quota 80%/);
+    assert.match(vietnamese, /OpenAI Codex · Weekly · 80%/);
     assert.match(vietnamese, /→ chuyển tải · 2 Quota/);
     assert.doesNotMatch(vietnamese, /đây chỉ là tín hiệu workload/);
     assert.match(vietnamese, /TÌNH TRẠNG MODEL/);

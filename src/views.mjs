@@ -1,7 +1,7 @@
 import { aggregateCacheByProvider, cacheRate, sortModels } from "./stats.mjs";
 import { modelPerformanceRows } from "./intelligence.mjs";
 import { buildOverviewIntelligence } from "./overview-intelligence.mjs";
-import { quotaDisplayGroups } from "./quota.mjs";
+import { quotaDisplayGroups, quotaLimitTitle } from "./quota.mjs";
 import { joinColumns, renderMetricGrid, sectionTitle } from "./layout.mjs";
 import { t } from "./i18n.mjs";
 import {
@@ -76,13 +76,82 @@ function accountLabel(report, fallback) {
   return fallback;
 }
 
+function orgLabel(report) {
+  const metadata = report?.metadata ?? {};
+  const value = metadata.orgName ?? metadata.orgId;
+  return typeof value === "string" && value.trim() ? value.trim() : "";
+}
+
 function planLabel(report) {
   const metadata = report?.metadata ?? {};
-  for (const key of ["planType", "plan", "tier"]) {
+  for (const key of ["planType", "currentTierName", "currentTierId", "plan", "tier"]) {
     const value = metadata[key];
     if (typeof value === "string" && value.trim()) return value.trim();
   }
   return "";
+}
+
+function formatQuotaValue(value, unit) {
+  if (!Number.isFinite(Number(value))) return "-";
+  const number = Number(value);
+  if (unit === "usd") return formatMoney(number);
+  if (unit === "tokens") return `${compactNumber(number)} tokens`;
+  if (unit === "requests") return `${compactNumber(number)} req`;
+  if (unit === "minutes") return `${compactNumber(number)} min`;
+  if (unit === "bytes") return `${compactNumber(number)} bytes`;
+  return compactNumber(number);
+}
+
+function quotaAmountDetail(limit) {
+  const amount = limit?.amount ?? {};
+  const unit = String(amount.unit ?? "unknown");
+  const parts = [];
+  if (unit !== "percent" && unit !== "unknown" && Number.isFinite(Number(amount.used)) && Number.isFinite(Number(amount.limit))) {
+    parts.push(`${formatQuotaValue(amount.used, unit)} / ${formatQuotaValue(amount.limit, unit)}`);
+  } else if (unit !== "percent" && unit !== "unknown" && Number.isFinite(Number(amount.remaining))) {
+    parts.push(`${formatQuotaValue(amount.remaining, unit)} left`);
+  }
+  const fraction = usedFraction(amount);
+  if (Number.isFinite(fraction)) parts.push(percent(fraction));
+  return parts.join(" · ");
+}
+
+function quotaProviderNote(note) {
+  const text = String(note ?? "").trim();
+  if (/OMP-observed spend only/i.test(text)) return t("quota.note.openCodeObserved");
+  if (/Ollama does not expose a standalone quota usage API/i.test(text)) return t("quota.note.ollamaNoApi");
+  return text;
+}
+
+function quotaLimitNote(note) {
+  const text = String(note ?? "").trim();
+  if (/^Unlimited$/i.test(text)) return t("quota.note.unlimited");
+  const overage = text.match(/^Overage requests:\s*(\d+)/i);
+  if (overage) return t("quota.note.overage", { count: overage[1] });
+  return text;
+}
+
+function resetCreditsText(report) {
+  const count = Number(report?.resetCredits?.availableCount || 0);
+  if (!(count > 0)) return "";
+  let text = count === 1 ? t("quota.savedResetOne") : t("quota.savedResets", { count });
+  const expiries = (report?.resetCredits?.credits ?? [])
+    .map(item => Date.parse(String(item?.expiresAt || "")))
+    .filter(Number.isFinite)
+    .filter(ms => ms > Date.now())
+    .sort((a, b) => a - b);
+  if (expiries[0]) text += ` · ${t("quota.savedResetExpiry", { time: formatUntil(expiries[0]) })}`;
+  return text;
+}
+
+function quotaRowTitle(limit, groupLabel = "") {
+  if (!groupLabel) return quotaLimitTitle(limit);
+  const semantic = String(limit?.label || "").trim();
+  if (semantic && semantic !== groupLabel) return quotaLimitTitle(limit);
+  let title = String(limit?.window?.label || limit?.scope?.windowId || limit?.id || "Quota");
+  const tier = String(limit?.scope?.tier || "").trim();
+  if (tier && !title.toLowerCase().includes(tier.toLowerCase())) title += ` (${tier})`;
+  return title;
 }
 
 function wrapPlain(text, width) {
@@ -346,17 +415,24 @@ function compactViewTarget(key) {
   return `${key} ${viewLabel(view)}`;
 }
 
+function compactQuotaBucket(alert) {
+  const label = String(alert?.quota?.groupLabel || alert?.quota?.label || "").trim();
+  return label || t("view.quota");
+}
+
 function compactAlertPrimary(alert) {
   const provider = alert.provider ? providerLabel(alert.provider) : "";
   if (alert.kind === "quota-reset-due") {
     return t("overview.compact.quotaResetDue", {
       provider,
+      bucket: compactQuotaBucket(alert),
       used: percent(alert.quota?.usedFraction),
     });
   }
   if (alert.kind === "quota-exhausted") {
     return t("overview.compact.quotaExhausted", {
       provider,
+      bucket: compactQuotaBucket(alert),
       used: percent(alert.quota?.usedFraction),
       reset: Number.isFinite(alert.quota?.resetsAt) ? formatUntil(alert.quota.resetsAt) : "-",
     });
@@ -367,6 +443,7 @@ function compactAlertPrimary(alert) {
       : "";
     return t("overview.compact.quotaRunway", {
       provider,
+      bucket: compactQuotaBucket(alert),
       used: percent(alert.quota?.usedFraction),
       eta: formatHours(alert.quota?.etaHours),
       reset: Number.isFinite(alert.quota?.resetsAt) ? formatUntil(alert.quota.resetsAt) : "-",
@@ -490,23 +567,25 @@ function renderAttention(intelligence, width) {
 function capacityLine(summary) {
   const row = summary.worst;
   const provider = providerLabel(summary.provider);
+  const bucket = String(row?.groupLabel || row?.label || "").trim();
+  const target = bucket ? `${provider} · ${bucket}` : provider;
   const reset = Number.isFinite(row?.resetsAt) ? formatUntil(row.resetsAt) : "-";
   if (!row) return provider;
   if ((row.status === "exhausted" || Number(row.usedFraction) >= 1) && Number.isFinite(row.resetsAt) && row.resetsAt <= Date.now()) {
-    return style.yellow(t("overview.capacity.resetDue", { provider }));
+    return style.yellow(t("overview.capacity.resetDue", { provider: target }));
   }
   if (row.status === "exhausted" || Number(row.usedFraction) >= 1) {
-    return style.red(t("overview.capacity.exhausted", { provider, reset }));
+    return style.red(t("overview.capacity.exhausted", { provider: target, reset }));
   }
   if (row.status === "at-risk") {
     return style.yellow(t("overview.capacity.risk", {
-      provider,
+      provider: target,
       used: percent(row.usedFraction),
       eta: formatHours(row.etaHours),
       reset,
     }));
   }
-  return t("overview.capacity.healthy", { provider, used: percent(row.usedFraction), reset });
+  return t("overview.capacity.healthy", { provider: target, used: percent(row.usedFraction), reset });
 }
 
 function renderCapacity(intelligence, width) {
@@ -667,40 +746,72 @@ function renderQuota(context, width) {
     lines.push(quotaRefreshing ? style.dim(t("quota.waiting")) : style.dim(t("quota.none")));
     return lines;
   }
+
   const grouped = new Map();
   for (const report of reports) {
     const bucket = grouped.get(report.provider) ?? [];
     bucket.push(report);
     grouped.set(report.provider, bucket);
   }
+
   for (const provider of [...grouped.keys()].sort((a, b) => providerLabel(a).localeCompare(providerLabel(b)))) {
     const providerReports = grouped.get(provider) ?? [];
     lines.push("");
     const state = providerStateText(providerStates.get(provider), quotaRefreshing);
     lines.push(` ${style.bold(providerLabel(provider))}${state ? `  ${state}` : ""}`);
+
+    const providerNotes = [...new Set(providerReports.flatMap(report => report?.notes ?? []).map(quotaProviderNote).filter(Boolean))];
+    for (const note of providerNotes) lines.push(style.dim(`   • ${note}`));
+
     providerReports.sort((a, b) => accountLabel(a, "").localeCompare(accountLabel(b, ""))).forEach((report, index) => {
       const identity = accountLabel(report, providerReports.length > 1 ? `${t("common.account")} ${index + 1}` : t("common.account"));
       const plan = planLabel(report);
-      lines.push(`   ${style.cyan(identity)}${plan ? style.dim(` · ${plan}`) : ""}`);
+      const org = orgLabel(report);
+      const resets = resetCreditsText(report);
+      lines.push(`   ${style.cyan(identity)}${org && org !== identity ? style.dim(` · ${org}`) : ""}${plan ? style.dim(` · ${plan}`) : ""}${resets ? ` · ${style.cyan(resets)}` : ""}`);
+
       const groups = quotaDisplayGroups(report);
       const hasLimits = groups.some(group => group.limits.length > 0);
-      if (!hasLimits) { lines.push(style.dim(t("quota.noWindows"))); return; }
+      if (!hasLimits) {
+        if (!providerNotes.length) lines.push(style.dim(t("quota.noWindows")));
+        return;
+      }
+
       const groupedAntigravity = report.provider === "google-antigravity" && groups.some(group => group.label);
       for (const group of groups) {
         if (groupedAntigravity && group.label) lines.push(`     ${style.bold(group.label)}`);
-        for (const limit of group.limits) {
+
+        const titles = group.limits.map(limit => quotaRowTitle(limit, groupedAntigravity ? group.label : ""));
+        const maxTitle = Math.max(22, ...titles.map(title => visibleWidth(title)));
+        const labelWidth = Math.max(18, Math.min(groupedAntigravity ? 34 : 48, maxTitle, Math.max(18, width - 66)));
+        const barWidth = Math.max(6, Math.min(20, width - labelWidth - (groupedAntigravity ? 45 : 41)));
+        const indent = groupedAntigravity ? "       " : "     ";
+
+        group.limits.forEach((limit, limitIndex) => {
           const fraction = usedFraction(limit.amount ?? {});
-          const windowLabel = String(limit.window?.label || limit.scope?.windowId || limit.id || "limit");
-          const labelWidth = groupedAntigravity ? 20 : 22;
-          const label = tableCell(windowLabel, labelWidth);
-          const barWidth = Math.max(6, Math.min(24, width - (groupedAntigravity ? 54 : 52)));
+          const title = titles[limitIndex];
           const bar = progressBar(fraction, barWidth);
           const pct = percent(fraction).padStart(6);
           const reset = formatReset(limit.window?.resetsAt).padStart(13);
-          const indent = groupedAntigravity ? "       " : "     ";
-          lines.push(`${indent}${label} ${bar} ${quotaColor(fraction, pct)} ${reset}`.trimEnd());
-          lines.push(`${indent}${" ".repeat(Math.min(labelWidth + 1, 23))}${intelligenceLine(limit)}`.trimEnd());
-        }
+          const compactQuota = width < 90;
+          if (compactQuota) {
+            lines.push(`${indent}${truncateAnsi(title, Math.max(12, width - visibleWidth(indent)))}`);
+            lines.push(`${indent}  ${bar} ${quotaColor(fraction, pct)} ${reset}`.trimEnd());
+          } else {
+            const label = tableCell(title, labelWidth);
+            lines.push(`${indent}${label} ${bar} ${quotaColor(fraction, pct)} ${reset}`.trimEnd());
+          }
+
+          const amountDetail = quotaAmountDetail(limit);
+          const detailIndent = compactQuota ? `${indent}  ` : `${indent}${" ".repeat(Math.min(labelWidth + 1, 49))}`;
+          if (amountDetail && String(limit?.amount?.unit || "percent") !== "percent") {
+            lines.push(style.dim(`${detailIndent}${amountDetail}`.trimEnd()));
+          }
+          for (const note of (limit?.notes ?? []).map(quotaLimitNote).filter(Boolean)) {
+            lines.push(style.dim(`${detailIndent}• ${note}`.trimEnd()));
+          }
+          lines.push(`${detailIndent}${intelligenceLine(limit)}`.trimEnd());
+        });
       }
     });
   }
