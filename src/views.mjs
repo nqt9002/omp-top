@@ -7,7 +7,7 @@ import { t } from "./i18n.mjs";
 import {
   style, compactNumber, percent, providerLabel, usedFraction, quotaColor, cacheColor,
   progressBar, formatReset, formatClock, formatAge, formatDuration, formatMoney,
-  formatHours, formatPercentPerHour, formatUntil, sparkline, truncateAnsi, padRight, visibleWidth,
+  formatHours, formatPercentPerHour, formatUntil, formatCountdown, sparkline, truncateAnsi, padRight, visibleWidth,
 } from "./format.mjs";
 
 export const VIEWS = [
@@ -58,13 +58,16 @@ export function statsStateText({ stats, refreshing, startedAt, updatedAt, error,
   return style.dim(t("state.notLoaded"));
 }
 
-function providerStateText(state, refreshing) {
-  if (!state) return refreshing ? style.yellow(t("state.providerRefreshing", { stamp: "" })) : "";
-  const stamp = state.updatedAt ? t("state.ago", { age: formatAge(state.updatedAt) }) : "";
-  if (state.status === "fresh") return style.green(t("state.providerFresh", { stamp }));
-  if (state.status === "refreshing") return style.yellow(t("state.providerRefreshing", { stamp: state.updatedAt ? t("state.last", { time: formatClock(state.updatedAt) }) : "" }));
-  if (state.status === "error") return style.red(t("state.providerStaleError", { stamp }));
-  return style.dim(t("state.providerStale", { stamp }));
+function providerStateText(state, refreshing, nextAt, now = Date.now()) {
+  if (!state) return refreshing ? style.yellow(t("state.providerRefreshing")) : "";
+  if (state.status === "fresh") {
+    return style.green(nextAt
+      ? t("state.providerFreshCountdown", { next: formatCountdown(nextAt, now) })
+      : t("state.providerFresh"));
+  }
+  if (state.status === "refreshing") return style.yellow(t("state.providerRefreshing"));
+  if (state.status === "error") return style.red(t("state.providerStaleError"));
+  return style.dim(t("state.providerStale"));
 }
 
 function accountLabel(report, fallback) {
@@ -131,16 +134,16 @@ function quotaLimitNote(note) {
   return text;
 }
 
-function resetCreditsText(report) {
+function resetCreditsText(report, now = Date.now()) {
   const count = Number(report?.resetCredits?.availableCount || 0);
   if (!(count > 0)) return "";
   let text = count === 1 ? t("quota.savedResetOne") : t("quota.savedResets", { count });
   const expiries = (report?.resetCredits?.credits ?? [])
     .map(item => Date.parse(String(item?.expiresAt || "")))
     .filter(Number.isFinite)
-    .filter(ms => ms > Date.now())
+    .filter(ms => ms > now)
     .sort((a, b) => a - b);
-  if (expiries[0]) text += ` · ${t("quota.savedResetExpiry", { time: formatUntil(expiries[0]) })}`;
+  if (expiries[0]) text += ` · ${t("quota.savedResetExpiry", { time: formatCountdown(expiries[0], now) })}`;
   return text;
 }
 
@@ -261,14 +264,13 @@ function alertDetail(alert) {
     return t("overview.detail.quotaResetDue", {
       limit: alert.quota?.groupLabel || alert.quota?.label || "quota",
       used: percent(alert.quota?.usedFraction),
-      reset: Number.isFinite(alert.quota?.resetsAt) ? formatAge(alert.quota.resetsAt) : "-",
     });
   }
   if (alert.kind === "quota-exhausted" || alert.kind === "quota-runway") {
     return t("overview.detail.quota", {
       limit: alert.quota?.groupLabel || alert.quota?.label || "quota",
       used: percent(alert.quota?.usedFraction),
-      reset: Number.isFinite(alert.quota?.resetsAt) ? formatUntil(alert.quota.resetsAt) : "-",
+      reset: Number.isFinite(alert.quota?.resetsAt) ? formatCountdown(alert.quota.resetsAt, now) : "-",
     });
   }
   if (alert.kind === "quota-acceleration") {
@@ -420,7 +422,16 @@ function compactQuotaBucket(alert) {
   return label || t("view.quota");
 }
 
-function compactAlertPrimary(alert) {
+function quotaEtaCountdown(quota, now = Date.now()) {
+  const projected = Number.isFinite(Number(quota?.recentProjectedExhaustAt))
+    ? Number(quota.recentProjectedExhaustAt)
+    : Number.isFinite(Number(quota?.projectedExhaustAt))
+      ? Number(quota.projectedExhaustAt)
+      : undefined;
+  return Number.isFinite(projected) ? formatCountdown(projected, now) : "-";
+}
+
+function compactAlertPrimary(alert, now = Date.now()) {
   const provider = alert.provider ? providerLabel(alert.provider) : "";
   if (alert.kind === "quota-reset-due") {
     return t("overview.compact.quotaResetDue", {
@@ -445,8 +456,8 @@ function compactAlertPrimary(alert) {
       provider,
       bucket: compactQuotaBucket(alert),
       used: percent(alert.quota?.usedFraction),
-      eta: formatHours(alert.quota?.etaHours),
-      reset: Number.isFinite(alert.quota?.resetsAt) ? formatUntil(alert.quota.resetsAt) : "-",
+      eta: quotaEtaCountdown(alert.quota, now),
+      reset: Number.isFinite(alert.quota?.resetsAt) ? formatCountdown(alert.quota.resetsAt, now) : "-",
       margin,
     });
   }
@@ -540,7 +551,7 @@ function compactAlertSecondary(alert) {
   return next;
 }
 
-function renderAttention(intelligence, width) {
+function renderAttention(intelligence, width, now = Date.now()) {
   const lines = [sectionTitle(t("section.attention"), width)];
   if (!intelligence.alerts.length) {
     if (!intelligence.coverage.stats && !intelligence.coverage.quota) {
@@ -555,7 +566,7 @@ function renderAttention(intelligence, width) {
 
   for (const alert of intelligence.alerts) {
     const badge = severityStyle(alert.severity, severityLabel(alert.severity));
-    lines.push(truncateAnsi(` ${badge}  ${compactAlertPrimary(alert)}`, width));
+    lines.push(truncateAnsi(` ${badge}  ${compactAlertPrimary(alert, now)}`, width));
     const secondary = compactAlertSecondary(alert);
     if (secondary) lines.push(truncateAnsi(`   ${style.bold(secondary)}`, width));
   }
@@ -564,14 +575,14 @@ function renderAttention(intelligence, width) {
   return lines;
 }
 
-function capacityLine(summary) {
+function capacityLine(summary, now = Date.now()) {
   const row = summary.worst;
   const provider = providerLabel(summary.provider);
   const bucket = String(row?.groupLabel || row?.label || "").trim();
   const target = bucket ? `${provider} · ${bucket}` : provider;
-  const reset = Number.isFinite(row?.resetsAt) ? formatUntil(row.resetsAt) : "-";
+  const reset = Number.isFinite(row?.resetsAt) ? formatCountdown(row.resetsAt, now) : "-";
   if (!row) return provider;
-  if ((row.status === "exhausted" || Number(row.usedFraction) >= 1) && Number.isFinite(row.resetsAt) && row.resetsAt <= Date.now()) {
+  if ((row.status === "exhausted" || Number(row.usedFraction) >= 1) && Number.isFinite(row.resetsAt) && row.resetsAt <= now) {
     return style.yellow(t("overview.capacity.resetDue", { provider: target }));
   }
   if (row.status === "exhausted" || Number(row.usedFraction) >= 1) {
@@ -581,21 +592,21 @@ function capacityLine(summary) {
     return style.yellow(t("overview.capacity.risk", {
       provider: target,
       used: percent(row.usedFraction),
-      eta: formatHours(row.etaHours),
+      eta: quotaEtaCountdown(row, now),
       reset,
     }));
   }
   return t("overview.capacity.healthy", { provider: target, used: percent(row.usedFraction), reset });
 }
 
-function renderCapacity(intelligence, width) {
+function renderCapacity(intelligence, width, now = Date.now()) {
   const lines = [sectionTitle(t("section.capacity"), width, style.dim(viewHint("2")))];
   if (!intelligence.capacity.length) {
     lines.push(style.dim(t("overview.capacity.none")));
     return lines;
   }
   for (const summary of intelligence.capacity.slice(0, 4)) {
-    let text = capacityLine(summary);
+    let text = capacityLine(summary, now);
     if (summary.resetCreditsAvailable > 0) {
       text += ` · ${style.cyan(t("overview.compact.resetCredit", { count: summary.resetCreditsAvailable }))}`;
     }
@@ -677,11 +688,13 @@ function renderSystemContext(context, intelligence, width) {
 }
 
 function renderOverview(context, width) {
+  const now = context.now ?? Date.now();
   const intelligence = buildOverviewIntelligence({
     stats: context.stats,
     quota: context.quota,
     cacheDiagnostics: context.cacheDiagnostics,
     events: context.events,
+    now,
   });
 
   const capacityWidth = width >= 112 ? Math.floor((width - 4) / 2) : width;
@@ -690,10 +703,10 @@ function renderOverview(context, width) {
   const workloadWidth = reliabilityWidth;
 
   return [
-    ...renderAttention(intelligence, width),
+    ...renderAttention(intelligence, width, now),
     "",
     ...joinColumns(
-      renderCapacity(intelligence, capacityWidth),
+      renderCapacity(intelligence, capacityWidth, now),
       renderReliability(intelligence, reliabilityWidth),
       width,
       { gap: 4, minWidth: 112 },
@@ -716,13 +729,21 @@ function tableCell(value, width) {
   return padRight(truncateAnsi(String(value ?? ""), Math.max(1, width)), Math.max(1, width));
 }
 
-function intelligenceLine(limit) {
+function intelligenceLine(limit, now = Date.now()) {
   const intel = limit?.intelligence;
   const burnValue = Number.isFinite(intel?.recentBurnPerHour) ? intel.recentBurnPerHour : intel?.burnPerHour;
   if (!intel || (intel.sampleCount ?? 0) < 2 || !Number.isFinite(burnValue)) return style.dim(t("quota.collecting"));
   const burn = formatPercentPerHour(burnValue);
-  const etaValue = Number.isFinite(intel.recentEtaHours) ? intel.recentEtaHours : intel.etaHours;
-  const eta = intel.status === "exhausted" ? t("time.now") : formatHours(etaValue);
+  const projected = Number.isFinite(Number(intel.recentProjectedExhaustAt))
+    ? Number(intel.recentProjectedExhaustAt)
+    : Number.isFinite(Number(intel.projectedExhaustAt))
+      ? Number(intel.projectedExhaustAt)
+      : undefined;
+  const eta = intel.status === "exhausted"
+    ? t("time.due")
+    : Number.isFinite(projected)
+      ? `↻${formatCountdown(projected, now)}`
+      : "-";
   const sustainable = formatPercentPerHour(intel.sustainablePerHour);
   const paceValue = Number.isFinite(intel.recentPaceRatio) ? intel.recentPaceRatio : intel.paceRatio;
   const pace = Number.isFinite(paceValue) ? `${paceValue.toFixed(2)}×` : "-";
@@ -739,7 +760,8 @@ function intelligenceLine(limit) {
 }
 
 function renderQuota(context, width) {
-  const { quota, providerStates = new Map(), quotaRefreshing } = context;
+  const { quota, providerStates = new Map(), quotaRefreshing, quotaNextAt } = context;
+  const now = context.now ?? Date.now();
   const reports = quota?.reports ?? [];
   const lines = [sectionTitle(t("section.quotaRunway"), width)];
   if (!reports.length) {
@@ -757,7 +779,7 @@ function renderQuota(context, width) {
   for (const provider of [...grouped.keys()].sort((a, b) => providerLabel(a).localeCompare(providerLabel(b)))) {
     const providerReports = grouped.get(provider) ?? [];
     lines.push("");
-    const state = providerStateText(providerStates.get(provider), quotaRefreshing);
+    const state = providerStateText(providerStates.get(provider), quotaRefreshing, quotaNextAt, now);
     lines.push(` ${style.bold(providerLabel(provider))}${state ? `  ${state}` : ""}`);
 
     const providerNotes = [...new Set(providerReports.flatMap(report => report?.notes ?? []).map(quotaProviderNote).filter(Boolean))];
@@ -767,7 +789,7 @@ function renderQuota(context, width) {
       const identity = accountLabel(report, providerReports.length > 1 ? `${t("common.account")} ${index + 1}` : t("common.account"));
       const plan = planLabel(report);
       const org = orgLabel(report);
-      const resets = resetCreditsText(report);
+      const resets = resetCreditsText(report, now);
       lines.push(`   ${style.cyan(identity)}${org && org !== identity ? style.dim(` · ${org}`) : ""}${plan ? style.dim(` · ${plan}`) : ""}${resets ? ` · ${style.cyan(resets)}` : ""}`);
 
       const groups = quotaDisplayGroups(report);
@@ -792,7 +814,7 @@ function renderQuota(context, width) {
           const title = titles[limitIndex];
           const bar = progressBar(fraction, barWidth);
           const pct = percent(fraction).padStart(6);
-          const reset = formatReset(limit.window?.resetsAt).padStart(13);
+          const reset = formatReset(limit.window?.resetsAt, now).padStart(13);
           const compactQuota = width < 90;
           if (compactQuota) {
             lines.push(`${indent}${truncateAnsi(title, Math.max(12, width - visibleWidth(indent)))}`);
@@ -810,7 +832,7 @@ function renderQuota(context, width) {
           for (const note of (limit?.notes ?? []).map(quotaLimitNote).filter(Boolean)) {
             lines.push(style.dim(`${detailIndent}• ${note}`.trimEnd()));
           }
-          lines.push(`${detailIndent}${intelligenceLine(limit)}`.trimEnd());
+          lines.push(`${detailIndent}${intelligenceLine(limit, now)}`.trimEnd());
         });
       }
     });
