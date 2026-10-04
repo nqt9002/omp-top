@@ -179,12 +179,9 @@ function quotaIntelligenceInteresting(limit) {
   const status = String(intel.status ?? limit?.status ?? "");
   const pace = Number.isFinite(Number(intel.recentPaceRatio)) ? Number(intel.recentPaceRatio) : Number(intel.paceRatio);
   const accel = Number(intel.accelerationRatio);
-  const projected = Number.isFinite(Number(intel.recentProjectedExhaustAt))
-    || Number.isFinite(Number(intel.projectedExhaustAt));
   return status === "exhausted"
     || status === "at-risk"
     || status === "watch"
-    || projected
     || intel.burnTrend === "spike"
     || intel.burnTrend === "elevated"
     || (Number.isFinite(pace) && pace >= 0.8)
@@ -201,7 +198,7 @@ function denseQuotaBar(fraction, width, risk) {
 }
 
 function denseQuotaPercent(fraction, risk) {
-  const text = percent(fraction);
+  const text = percent(fraction).padStart(6);
   if (risk === "critical") return style.red(text);
   if (risk === "watch") return style.yellow(text);
   return text;
@@ -865,7 +862,7 @@ function renderQuota(context, width) {
           const fraction = usedFraction(limit.amount ?? {});
           const risk = quotaRiskLevel(limit, fraction);
           const bar = denseQuotaBar(fraction, barWidth, risk);
-          const pct = denseQuotaPercent(fraction, risk).padStart(6);
+          const pct = denseQuotaPercent(fraction, risk);
           const reset = formatReset(limit.window?.resetsAt, now);
           const compactQuota = width < 90;
 
