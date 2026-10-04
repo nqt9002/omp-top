@@ -7,6 +7,7 @@ import { directViewIndex, nextViewIndex, renderView } from "../src/views.mjs";
 import { OmpTopApp } from "../src/top.mjs";
 import { Keys } from "../src/tui.mjs";
 import { stripAnsi, visibleWidth } from "../src/format.mjs";
+import { getLocale, setLocale } from "../src/i18n.mjs";
 
 const HOUR = 60 * 60 * 1000;
 const baseRow = { provider: "openai-codex", accountKey: "a", accountId: "a", limitId: "weekly", label: "Weekly", windowLabel: "Weekly", status: "ok" };
@@ -260,4 +261,98 @@ test("compact cache and agent views use stacked fallbacks instead of wide tables
   assert.match(cache, /req 7 · hit/);
   assert.match(agents, /task/);
   assert.match(agents, /share/);
+});
+
+
+test("quota view uses only decreasing countdowns for refresh reset and ETA", () => {
+  const previous = getLocale();
+  const now = 1_800_000_000_000;
+  const resetAt = now + 2 * HOUR;
+  const projectedAt = now + 90 * 60_000;
+  const quota = {
+    reports: [{
+      provider: "anthropic",
+      fetchedAt: now,
+      metadata: { accountId: "a" },
+      limits: [{
+        id: "anthropic:5h",
+        label: "Claude 5 Hour",
+        scope: { provider: "anthropic", shared: true },
+        window: { label: "5 Hour", resetsAt: resetAt },
+        amount: { usedFraction: 0.23 },
+        intelligence: {
+          sampleCount: 3,
+          status: "at-risk",
+          recentBurnPerHour: 0.1,
+          recentProjectedExhaustAt: projectedAt,
+          sustainablePerHour: 0.4,
+          recentPaceRatio: 0.25,
+        },
+      }],
+    }],
+  };
+  const states = new Map([["anthropic", { status: "fresh", updatedAt: now }]]);
+
+  try {
+    setLocale("vi");
+    const first = stripAnsi(renderView("quota", {
+      quota,
+      providerStates: states,
+      quotaRefreshing: false,
+      quotaNextAt: now + 5 * 60_000,
+      now,
+    }, 120).join("\n"));
+    assert.match(first, /refresh ↻5p/);
+    assert.match(first, /reset ↻2g/);
+    assert.match(first, /ETA ↻1g 30p/);
+    assert.doesNotMatch(first, /trước/);
+
+    const laterNow = now + 65_000;
+    const later = stripAnsi(renderView("quota", {
+      quota,
+      providerStates: states,
+      quotaRefreshing: false,
+      quotaNextAt: now + 5 * 60_000,
+      now: laterNow,
+    }, 120).join("\n"));
+    assert.match(later, /refresh ↻3p 55s/);
+    assert.match(later, /reset ↻1g 58p/);
+    assert.match(later, /ETA ↻1g 28p/);
+    assert.doesNotMatch(later, /trước/);
+  } finally {
+    setLocale(previous);
+  }
+});
+
+test("past quota reset renders a fixed due state instead of counting upward", () => {
+  const previous = getLocale();
+  const now = 1_800_000_000_000;
+  try {
+    setLocale("vi");
+    const screen = stripAnsi(renderView("quota", {
+      quota: {
+        reports: [{
+          provider: "anthropic",
+          fetchedAt: now,
+          metadata: { accountId: "a" },
+          limits: [{
+            id: "anthropic:7d",
+            label: "Claude 7 Day",
+            scope: { provider: "anthropic", shared: true },
+            window: { label: "7 Day", resetsAt: now - 5 * 60_000 },
+            amount: { usedFraction: 1 },
+            intelligence: { sampleCount: 2, status: "exhausted", recentBurnPerHour: 0.1 },
+          }],
+        }],
+      },
+      providerStates: new Map([["anthropic", { status: "fresh", updatedAt: now }]]),
+      quotaRefreshing: false,
+      quotaNextAt: now + 5 * 60_000,
+      now,
+    }, 120).join("\n"));
+    assert.match(screen, /đã tới giờ reset/);
+    assert.doesNotMatch(screen, /5p trước/);
+  } finally {
+    setLocale(previous);
+  }
 });

@@ -77,15 +77,41 @@ export function formatUntil(timestamp, now = Date.now()) {
   return t("time.daysHours", { days, hours: remHours ? ` ${t("time.hoursMinutes", { hours: remHours, minutes: "" })}` : "" });
 }
 
+export function formatCountdown(timestamp, now = Date.now()) {
+  if (!Number.isFinite(Number(timestamp))) return "-";
+  const deltaMs = Number(timestamp) - Number(now);
+  if (deltaMs <= 0) return t("time.due");
+
+  const totalSeconds = Math.max(1, Math.ceil(deltaMs / 1000));
+  if (totalSeconds < 60) return t("time.seconds", { value: totalSeconds });
+
+  const totalMinutes = Math.floor(totalSeconds / 60);
+  const seconds = totalSeconds % 60;
+  if (totalMinutes < 60) {
+    return `${t("time.minutes", { value: totalMinutes })}${seconds ? ` ${t("time.seconds", { value: seconds })}` : ""}`;
+  }
+
+  const hours = Math.floor(totalMinutes / 60);
+  const minutes = totalMinutes % 60;
+  if (hours < 24) {
+    return t("time.hoursMinutes", {
+      hours,
+      minutes: minutes ? ` ${t("time.minutes", { value: minutes })}` : "",
+    });
+  }
+
+  const days = Math.floor(hours / 24);
+  const remHours = hours % 24;
+  return t("time.daysHours", {
+    days,
+    hours: remHours ? ` ${t("time.hoursMinutes", { hours: remHours, minutes: "" })}` : "",
+  });
+}
+
 export function formatReset(resetsAt, now = Date.now()) {
-  if (!Number.isFinite(resetsAt)) return "";
-  let min = Math.ceil((resetsAt - now) / 60000);
-  if (min <= 0) return t("time.resetNow");
-  if (min < 60) return t("time.resetMinutes", { minutes: min });
-  const h = Math.floor(min / 60); min %= 60;
-  if (h < 24) return t("time.resetHours", { hours: h, minutes: min ? ` ${min}m` : "" });
-  const d = Math.floor(h / 24); const rh = h % 24;
-  return t("time.resetDays", { days: d, hours: rh ? ` ${rh}h` : "" });
+  if (!Number.isFinite(Number(resetsAt))) return "";
+  if (Number(resetsAt) <= Number(now)) return t("time.resetDue");
+  return t("time.resetCountdown", { time: formatCountdown(resetsAt, now) });
 }
 export function formatDuration(ms) {
   if (!Number.isFinite(ms)) return "-";
