@@ -704,7 +704,7 @@ export function buildOverviewIntelligence({ stats, quota, cacheDiagnostics, even
       agents: (stats?.byAgentType ?? []).length > 0,
       events: (events ?? []).length > 0,
     },
-    alerts: alerts.slice(0, 5),
+    alerts: alerts.slice(0, 4),
     capacity,
     reliability,
     cache,
