@@ -142,9 +142,8 @@ test("decision engine surfaces quota urgency, conservative workload attribution,
   assert.equal(quotaAlert.correlation.cacheLow, true);
   assert.equal(quotaAlert.correlation.workloadElevated, true);
 
-  const failure = overview.alerts.find(alert => alert.kind === "model-failure");
+  const failure = overview.reliability.failures.find(row => row.model === "claude-sonnet-5-5");
   assert.ok(failure);
-  assert.equal(failure.model, "claude-sonnet-5-5");
   assert.equal(failure.confidence, "low");
   assert.equal(failure.failedRequests, 2);
 
