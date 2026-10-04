@@ -266,6 +266,11 @@ const EN = {
 
   "top.profile": "profile {name}",
   "top.statsFreshness": "stats {stats} · quota {quota}",
+  "top.refreshingShort": "refreshing…",
+  "top.pending": "pending",
+  "top.pendingNext": "pending · ↻{next}",
+  "top.ageNext": "{age} old · ↻{next}",
+  "top.ageOnly": "{age} old",
   "top.scroll": "scroll {current}/{total}",
   "top.hintsCompact": "1–6 view · Tab switch · r refresh · ↑↓ scroll · q exit",
   "top.hints": "1–6 view · Tab/Shift+Tab/←→ switch · r refresh · ↑↓/j/k scroll · PgUp/PgDn · q/Esc exit",
@@ -604,6 +609,11 @@ const VI = {
 
   "top.profile": "profile {name}",
   "top.statsFreshness": "stats {stats} · quota {quota}",
+  "top.refreshingShort": "đang làm mới…",
+  "top.pending": "đang chờ",
+  "top.pendingNext": "đang chờ · ↻{next}",
+  "top.ageNext": "{age} trước · ↻{next}",
+  "top.ageOnly": "{age} trước",
   "top.scroll": "cuộn {current}/{total}",
   "top.hintsCompact": "1–6 màn · Tab chuyển · r làm mới · ↑↓ cuộn · q thoát",
   "top.hints": "1–6 màn · Tab/Shift+Tab/←→ chuyển · r làm mới · ↑↓/j/k cuộn · PgUp/PgDn · q/Esc thoát",

@@ -70,7 +70,25 @@ omp-top --redact
 omp-top --quota-timeout 30000
 ```
 
-### Keyboard controls
+### Automatic refresh
+
+omp-top refreshes itself by default with conservative fixed cadences:
+
+- **Stats / cache diagnostics:** every 60 seconds. These are local OMP statistics and do not poll provider quota APIs.
+- **Quota:** every 5 minutes, matching OMP 18.6.0's built-in usage-report cache TTL.
+- **Countdown redraw:** once per second for the UI only; it does not fetch any data.
+
+The header shows both freshness and time to the next automatic check, for example:
+
+```
+stats 18s old · ↻42s · quota 2m old · ↻3m
+```
+
+Press `r` for an immediate normal refresh. Manual refresh still respects OMP's own provider usage cache; omp-top does **not** automatically invalidate that cache.
+
+The quota interval is intentionally not user-configurable. Very aggressive provider usage polling can create unnecessary upstream load and may trigger provider rate limits, so omp-top follows OMP's own cache cadence instead.
+
+## Keyboard controls
 
 | Key | Action |
 | --- | --- |
