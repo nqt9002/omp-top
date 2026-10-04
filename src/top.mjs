@@ -2,7 +2,7 @@ import { TerminalUI, Keys } from "./tui.mjs";
 import { fetchStats } from "./omp.mjs";
 import { normalizeStats } from "./stats.mjs";
 import { loadHistoricalQuota, mergeProviderReports, ProgressiveQuotaRefresh } from "./quota.mjs";
-import { style, providerLabel, formatAge, formatUntil } from "./format.mjs";
+import { style, providerLabel, formatCountdown } from "./format.mjs";
 import {
   composeSides, frameBottom, frameDivider, frameRow, frameTop, offsetLine, workspaceGeometry,
 } from "./layout.mjs";
@@ -276,18 +276,10 @@ export class OmpTopApp {
     this.#ui.draw();
   }
 
-  #freshnessLane(updatedAt, nextAt, refreshing) {
+  #freshnessLane(nextAt, refreshing) {
     if (refreshing) return t("top.refreshingShort");
-    const now = this.#deps.now();
-    if (!updatedAt) {
-      return nextAt
-        ? t("top.pendingNext", { next: formatUntil(nextAt, now) })
-        : t("top.pending");
-    }
-    const age = formatAge(updatedAt, now);
-    return nextAt
-      ? t("top.ageNext", { age, next: formatUntil(nextAt, now) })
-      : t("top.ageOnly", { age });
+    if (!nextAt) return t("top.pending");
+    return t("top.nextCountdown", { next: formatCountdown(nextAt, this.#deps.now()) });
   }
 
   render(width, height) {
@@ -300,8 +292,8 @@ export class OmpTopApp {
 
     const freshness = workspace.innerWidth >= 120
       ? style.dim(t("top.statsFreshness", {
-          stats: this.#freshnessLane(this.#snapshot.statsUpdatedAt, this.#statsNextAt, this.#statsRefreshing),
-          quota: this.#freshnessLane(this.#snapshot.quotaUpdatedAt, this.#quotaNextAt, this.#quotaRefreshing),
+          stats: this.#freshnessLane(this.#statsNextAt, this.#statsRefreshing),
+          quota: this.#freshnessLane(this.#quotaNextAt, this.#quotaRefreshing),
         }))
       : "";
     const tabs = renderViewTabs(this.#viewIndex, workspace.innerWidth);
@@ -321,6 +313,8 @@ export class OmpTopApp {
       cacheDiagnostics: this.#snapshot.cacheDiagnostics,
       providerStates: this.#states,
       quotaRefreshing: this.#quotaRefreshing,
+      quotaNextAt: this.#quotaNextAt,
+      now: this.#deps.now(),
       events: this.#events,
     }, workspace.innerWidth);
 
