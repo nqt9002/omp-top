@@ -267,6 +267,87 @@ export function mergeProviderReports(payload, provider, freshReports) {
   return { ...payload, generatedAt: generatedAt || payload?.generatedAt, reports: [...other, ...next] };
 }
 
+function rebaseHistoricalIntelligence(previousLimit, freshLimit, observedAt) {
+  const previous = previousLimit?.intelligence;
+  if (!previous) return undefined;
+
+  const freshUsed = limitUsedFraction(freshLimit);
+  const historicalUsed = Number(previous.usedFraction);
+  const freshReset = Number(freshLimit?.window?.resetsAt);
+  const historicalReset = Number(previous.resetsAt ?? previousLimit?.window?.resetsAt);
+
+  if (Number.isFinite(freshReset) && Number.isFinite(historicalReset) && Math.abs(freshReset - historicalReset) > 60_000) {
+    return undefined;
+  }
+  if (Number.isFinite(freshUsed) && Number.isFinite(historicalUsed) && freshUsed + 0.02 < historicalUsed) {
+    return undefined;
+  }
+
+  const intelligence = { ...previous };
+  if (Number.isFinite(freshUsed)) {
+    intelligence.usedFraction = Math.max(0, Math.min(1, freshUsed));
+    intelligence.remainingFraction = Math.max(0, 1 - intelligence.usedFraction);
+  }
+  if (Number.isFinite(freshReset)) intelligence.resetsAt = freshReset;
+
+  const remaining = Number.isFinite(intelligence.remainingFraction)
+    ? intelligence.remainingFraction
+    : Number.isFinite(intelligence.usedFraction) ? Math.max(0, 1 - intelligence.usedFraction) : undefined;
+  const at = Number.isFinite(observedAt) ? observedAt : Date.now();
+
+  if (Number.isFinite(remaining)) {
+    if (Number.isFinite(intelligence.burnPerHour) && intelligence.burnPerHour > 1e-9) {
+      intelligence.etaHours = remaining / intelligence.burnPerHour;
+      intelligence.projectedExhaustAt = at + intelligence.etaHours * 60 * 60 * 1000;
+    } else {
+      intelligence.etaHours = undefined;
+      intelligence.projectedExhaustAt = undefined;
+    }
+
+    if (Number.isFinite(intelligence.recentBurnPerHour) && intelligence.recentBurnPerHour > 1e-9) {
+      intelligence.recentEtaHours = remaining / intelligence.recentBurnPerHour;
+      intelligence.recentProjectedExhaustAt = at + intelligence.recentEtaHours * 60 * 60 * 1000;
+    } else {
+      intelligence.recentEtaHours = undefined;
+      intelligence.recentProjectedExhaustAt = undefined;
+    }
+
+    if (Number.isFinite(freshReset) && freshReset > at) {
+      const resetHours = (freshReset - at) / (60 * 60 * 1000);
+      intelligence.sustainablePerHour = resetHours > 0 ? remaining / resetHours : undefined;
+      intelligence.paceRatio = Number.isFinite(intelligence.sustainablePerHour) && intelligence.sustainablePerHour > 1e-9
+        && Number.isFinite(intelligence.burnPerHour)
+        ? intelligence.burnPerHour / intelligence.sustainablePerHour
+        : undefined;
+      intelligence.recentPaceRatio = Number.isFinite(intelligence.sustainablePerHour) && intelligence.sustainablePerHour > 1e-9
+        && Number.isFinite(intelligence.recentBurnPerHour)
+        ? intelligence.recentBurnPerHour / intelligence.sustainablePerHour
+        : undefined;
+    } else {
+      intelligence.sustainablePerHour = undefined;
+      intelligence.paceRatio = undefined;
+      intelligence.recentPaceRatio = undefined;
+    }
+  }
+
+  const providerStatus = String(freshLimit?.status ?? "");
+  const forecastExhaustAt = Number.isFinite(intelligence.recentProjectedExhaustAt)
+    ? intelligence.recentProjectedExhaustAt
+    : intelligence.projectedExhaustAt;
+  const forecastPace = Number.isFinite(intelligence.recentPaceRatio)
+    ? intelligence.recentPaceRatio
+    : intelligence.paceRatio;
+  const used = Number.isFinite(intelligence.usedFraction) ? intelligence.usedFraction : freshUsed;
+
+  if (providerStatus === "exhausted" || (Number.isFinite(used) && used >= 1)) intelligence.status = "exhausted";
+  else if (Number.isFinite(forecastExhaustAt) && Number.isFinite(freshReset) && forecastExhaustAt < freshReset) intelligence.status = "at-risk";
+  else if (Number.isFinite(forecastPace) && forecastPace >= 0.8) intelligence.status = "watch";
+  else if (Number.isFinite(intelligence.burnPerHour) || Number.isFinite(intelligence.recentBurnPerHour)) intelligence.status = "ok";
+  else intelligence.status = "unknown";
+
+  return intelligence;
+}
+
 /** Enrich authoritative final usage JSON with matching read-only history intelligence, without reintroducing stale accounts/limits. */
 export function enrichQuotaPayload(freshPayload, historicalPayload) {
   const freshReports = Array.isArray(freshPayload?.reports) ? freshPayload.reports : [];
@@ -286,16 +367,23 @@ export function enrichQuotaPayload(freshPayload, historicalPayload) {
     const old = (identity && candidates.find(report => reportIdentity(report) === identity)) || candidates[ordinal];
     if (!old) return fresh;
     const oldLimits = new Map((old.limits ?? []).map(limit => [limit.id || limit.label || JSON.stringify(limit.scope ?? {}), limit]));
+    const observedAt = Number(fresh.fetchedAt ?? freshPayload?.generatedAt ?? Date.now());
     const limits = (fresh.limits ?? []).map(limit => {
       const key = limit.id || limit.label || JSON.stringify(limit.scope ?? {});
       const previous = oldLimits.get(key);
-      return previous ? {
-        ...previous, ...limit,
+      if (!previous) return limit;
+
+      const intelligence = rebaseHistoricalIntelligence(previous, limit, observedAt);
+      const sameCycle = Boolean(intelligence);
+      return {
+        ...limit,
         scope: { ...previous.scope, ...limit.scope },
-        window: (previous.window || limit.window) ? { ...previous.window, ...limit.window } : undefined,
-        amount: { ...previous.amount, ...limit.amount },
-        ...(previous.intelligence ? { intelligence: previous.intelligence } : {}),
-      } : limit;
+        window: sameCycle && (previous.window || limit.window)
+          ? { ...previous.window, ...limit.window }
+          : limit.window,
+        amount: { ...limit.amount },
+        ...(intelligence ? { intelligence } : {}),
+      };
     });
     return { ...old, ...fresh, metadata: { ...old.metadata, ...fresh.metadata }, limits };
   });
