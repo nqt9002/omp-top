@@ -147,7 +147,7 @@ test("overview is anomaly-first and does not duplicate the detailed model table"
   };
   const wide = stripAnsi(renderView("overview", { stats, statsState: {}, quota, events: [] }, 156).join("\n"));
   assert.match(wide, /ATTENTION/);
-  assert.match(wide, /OpenAI Codex quota 100% · reset/);
+  assert.match(wide, /OpenAI Codex · Weekly · 100% · reset/);
   assert.match(wide, /→ shift work · 2 Quota/);
   assert.match(wide, /CAPACITY \/ QUOTA/);
   assert.match(wide, /SYSTEM CONTEXT/);
