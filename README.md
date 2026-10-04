@@ -236,6 +236,28 @@ Likely contributors such as subagent concentration, one dominant project/session
 
 If `stats.db` is unavailable or its schema changes, omp-top falls back to the normal aggregate cache statistics.
 
+### Quota provider coverage
+
+omp-top mirrors the normalized quota buckets emitted by OMP instead of maintaining a separate provider-specific scraper. Semantic `UsageLimit.label` values are preserved, so model/tier/feature counters that share the same time window remain distinguishable.
+
+| OMP provider | Quota detail preserved by omp-top |
+| --- | --- |
+| OpenAI Codex | primary/secondary windows, Spark/additional limits, saved reset credits |
+| Anthropic | 5h + shared 7d plus Opus/Sonnet/Fable/Mythos scoped weekly counters when OMP reports them |
+| Google Antigravity | Google/Anthropic/OpenAI backend counters, tiers and daily/weekly windows; only duplicate shared upstream counters are deduped |
+| Google Gemini CLI | every modelId quota bucket and current plan/tier |
+| GitHub Copilot | Premium, Chat, Completions and billing model rows, including Unlimited/overage notes |
+| ZAI | token, request and Web Search/Reader/Zread feature quotas |
+| OpenCode Go | rolling 5h, weekly and monthly OMP-observed spend, including absolute USD amounts |
+| Kimi Code | total quota and provider-supplied limit/window rows |
+| Cursor | request/model and spend limits returned by Cursor |
+| Ollama | no standalone quota API; omp-top shows OMP's explanatory provider note |
+| Ollama Cloud | no standalone quota API; omp-top shows OMP's explanatory provider note |
+
+MiniMax's OMP usage module currently has no quota API implementation and is not registered in OMP's default usage-provider list, so omp-top does not invent a quota value for it.
+
+Quota rendering follows OMP's own title semantics: provider-defined limit label first, then tier/window only when they add information. Absolute units (USD/tokens/requests/minutes/bytes), provider/limit notes and reset-credit metadata are shown when OMP includes them.
+
 ### Quota
 
 A single background process runs:
