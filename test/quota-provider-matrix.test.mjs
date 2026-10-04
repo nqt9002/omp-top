@@ -182,6 +182,15 @@ test("provider matrix renders semantic labels, absolute amounts, notes and reset
   ]) assert.ok(screen.includes(expected), expected);
 });
 
+test("current Antigravity backend counters stay distinct", () => {
+  const item = report("google-antigravity", [
+    limit("google-antigravity:google:default:weekly", "Usage (Google)", "google-antigravity", { scope: { windowId: "weekly" }, window: window("weekly", "Weekly") }),
+    limit("google-antigravity:anthropic:default:weekly", "Usage (Anthropic)", "google-antigravity", { scope: { windowId: "weekly" }, window: window("weekly", "Weekly") }),
+    limit("google-antigravity:openai:default:weekly", "Usage (OpenAI)", "google-antigravity", { scope: { windowId: "weekly" }, window: window("weekly", "Weekly") }),
+  ]);
+  assert.deepEqual(quotaLimitIdsForDisplay(item).sort(), item.limits.map(row => row.id).sort());
+});
+
 test("Antigravity intentional shared-counter dedupe remains intact", () => {
   const item = report("google-antigravity", [
     limit("a", "Claude & GPT (shared)", "google-antigravity", { scope: { shared: true, sharedGroup: "3p:weekly", windowId: "weekly" }, window: window("weekly", "Weekly"), amount: percentAmount(0.2) }),
