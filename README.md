@@ -78,11 +78,13 @@ omp-top refreshes itself by default with conservative fixed cadences:
 - **Quota:** every 5 minutes, matching OMP 18.6.0's built-in usage-report cache TTL.
 - **Countdown redraw:** once per second for the UI only; it does not fetch any data.
 
-The header shows both freshness and time to the next automatic check, for example:
+The header uses countdowns only, so every live timer moves in the same direction:
 
 ```
-stats 18s old · ↻42s · quota 2m old · ↻3m
+stats ↻42s · quota ↻3m
 ```
+
+Quota reset, ETA and saved-credit expiry timers follow the same countdown convention. Once a deadline is reached, omp-top shows a fixed due state instead of switching to an elapsed "ago" counter.
 
 Press `r` for an immediate normal refresh. Manual refresh still respects OMP's own provider usage cache; omp-top does **not** automatically invalidate that cache.
 
