@@ -341,3 +341,179 @@ test("Vietnamese cache intelligence uses natural technical wording", () => {
     setLocale(previous);
   }
 });
+
+
+test("provider capacity keeps ETA and reset on the same quota window", () => {
+  const now = Date.now();
+  const worstReset = now + (4 * 24 + 9) * HOUR;
+  const overview = buildOverviewIntelligence({
+    stats: normalizeStats({ byModel: [] }),
+    quota: {
+      reports: [{
+        provider: "google-antigravity",
+        limits: [
+          {
+            id: "gemini",
+            label: "Gemini",
+            scope: { provider: "google-antigravity" },
+            window: { resetsAt: worstReset },
+            amount: { usedFraction: 0.28 },
+            intelligence: {
+              status: "at-risk",
+              recentEtaHours: 4 * 24 + 1,
+              recentProjectedExhaustAt: now + (4 * 24 + 1) * HOUR,
+            },
+          },
+          {
+            id: "other",
+            label: "Other pool",
+            scope: { provider: "google-antigravity" },
+            window: { resetsAt: now + 5 * HOUR },
+            amount: { usedFraction: 0.1 },
+            intelligence: { status: "ok" },
+          },
+        ],
+      }],
+    },
+    now,
+  });
+  const summary = overview.capacity[0];
+  assert.equal(summary.worst.label, "Gemini");
+  assert.equal(summary.resetAt, worstReset);
+  assert.equal(summary.earliestProviderResetAt, now + 5 * HOUR);
+  const alert = overview.alerts.find(item => item.kind === "quota-runway");
+  assert.ok(alert);
+  assert.ok(alert.runwayMarginHours > 7.9 && alert.runwayMarginHours < 8.1);
+  assert.equal(alert.severity, "warning");
+  assert.equal(alert.actionLevel, "reduce");
+});
+
+test("reset-due exhausted quota asks for refresh instead of waiting for reset", () => {
+  const now = Date.now();
+  const overview = buildOverviewIntelligence({
+    stats: normalizeStats({ byModel: [] }),
+    quota: {
+      reports: [{
+        provider: "anthropic",
+        limits: [{
+          id: "weekly",
+          label: "Claude 7 Day",
+          scope: { provider: "anthropic" },
+          window: { resetsAt: now - 60_000 },
+          amount: { usedFraction: 1 },
+          intelligence: { status: "exhausted", resetsAt: now - 60_000 },
+        }],
+      }],
+    },
+    now,
+  });
+  const alert = overview.alerts.find(item => item.kind === "quota-reset-due");
+  assert.ok(alert);
+  assert.equal(alert.severity, "warning");
+
+  const previous = getLocale();
+  try {
+    setLocale("vi");
+    const screen = stripAnsi(renderView("overview", {
+      stats: normalizeStats({ byModel: [] }),
+      quota: {
+        reports: [{
+          provider: "anthropic",
+          limits: [{
+            id: "weekly",
+            label: "Claude 7 Day",
+            scope: { provider: "anthropic" },
+            window: { resetsAt: now - 60_000 },
+            amount: { usedFraction: 1 },
+            intelligence: { status: "exhausted", resetsAt: now - 60_000 },
+          }],
+        }],
+      },
+      events: [],
+      statsState: {},
+    }, 120).join("\n"));
+    assert.match(screen, /đã tới giờ reset/);
+    assert.match(screen, /làm mới Quota và chờ provider đồng bộ/);
+    assert.doesNotMatch(screen, /cho tới khi quota được reset/);
+  } finally {
+    setLocale(previous);
+  }
+});
+
+test("request rate at 4x baseline becomes an Attention signal", () => {
+  const now = Date.now();
+  const stats = normalizeStats({
+    timeSeries: [
+      ...[-10,-9,-8,-7,-6,-5,-4].map(h => ({ timestamp: now + h * HOUR, requests: 2 })),
+      ...[-2,-1,0].map(h => ({ timestamp: now + h * HOUR, requests: 8 })),
+    ],
+    byModel: [],
+  });
+  const overview = buildOverviewIntelligence({ stats, now });
+  const alert = overview.alerts.find(item => item.kind === "request-spike");
+  assert.ok(alert);
+  assert.equal(alert.severity, "warning");
+  assert.ok(alert.ratio >= 4);
+});
+
+test("cache Overview evidence names a concrete sibling and strongest likely contributor", () => {
+  const previous = getLocale();
+  try {
+    setLocale("vi");
+    const stats = normalizeStats({
+      overall: { cacheRate: 0.67 },
+      byModel: [
+        { provider: "openai-codex", model: "gpt-6-astra", totalRequests: 1090, totalInputTokens: 72_500_000, totalCacheReadTokens: 73_300_000, totalCacheWriteTokens: 1, cacheRate: 0.503 },
+        { provider: "openai-codex", model: "gpt-6.1-sol", totalRequests: 50, totalInputTokens: 360_000, totalCacheReadTokens: 2_650_000, totalCacheWriteTokens: 1, cacheRate: 0.88 },
+      ],
+    });
+    const diagnostics = {
+      overall: { uncachedInputTokens: 72_860_000, cacheReadTokens: 75_950_000, cacheRate: 0.51 },
+      byModel: [
+        { provider: "openai-codex", model: "gpt-6-astra", requests: 1090, uncachedInputTokens: 72_500_000, cacheReadTokens: 73_300_000, cacheWriteTokens: 1, cacheRate: 0.503 },
+        { provider: "openai-codex", model: "gpt-6.1-sol", requests: 50, uncachedInputTokens: 360_000, cacheReadTokens: 2_650_000, cacheWriteTokens: 1, cacheRate: 0.88 },
+      ],
+      byAgentModel: [
+        { provider: "openai-codex", model: "gpt-6-astra", agentType: "subagent", uncachedInputTokens: 50_000_000, cacheReadTokens: 10_000_000, requests: 500 },
+        { provider: "openai-codex", model: "gpt-6-astra", agentType: "main", uncachedInputTokens: 22_500_000, cacheReadTokens: 63_300_000, requests: 590 },
+      ],
+      byFolderModel: [],
+      bySessionModel: [],
+    };
+    const screen = stripAnsi(renderView("overview", {
+      stats,
+      cacheDiagnostics: diagnostics,
+      quota: { reports: [] },
+      events: [],
+      statsState: {},
+    }, 120).join("\n"));
+    assert.match(screen, /gpt-6\.1-sol cùng provider: Cache hit 88%/);
+    assert.match(screen, /subagent tạo 69% uncached input/);
+    assert.doesNotMatch(screen, /provider\/peer/);
+  } finally {
+    setLocale(previous);
+  }
+});
+
+test("small model-failure samples are described as small samples, not uncertain failures", () => {
+  const previous = getLocale();
+  try {
+    setLocale("vi");
+    const stats = normalizeStats({
+      byModel: [{
+        provider: "anthropic",
+        model: "claude-sonnet-5-5",
+        totalRequests: 4,
+        successfulRequests: 0,
+        failedRequests: 4,
+        errorRate: 1,
+      }],
+    });
+    const screen = stripAnsi(renderView("overview", { stats, quota: { reports: [] }, events: [], statsState: {} }, 120).join("\n"));
+    assert.match(screen, /4\/4 request lỗi/);
+    assert.match(screen, /mẫu nhỏ \(4 request\)/);
+    assert.doesNotMatch(screen, /mức chắc chắn thấp/);
+  } finally {
+    setLocale(previous);
+  }
+});
