@@ -7,7 +7,7 @@ import { t } from "./i18n.mjs";
 import {
   style, compactNumber, percent, providerLabel, usedFraction, quotaColor, cacheColor,
   progressBar, formatReset, formatClock, formatAge, formatDuration, formatMoney,
-  formatHours, formatPercentPerHour, formatUntil, sparkline, truncateAnsi, padRight,
+  formatHours, formatPercentPerHour, formatUntil, sparkline, truncateAnsi, padRight, visibleWidth,
 } from "./format.mjs";
 
 export const VIEWS = [
@@ -85,6 +85,34 @@ function planLabel(report) {
   return "";
 }
 
+function wrapPlain(text, width) {
+  const words = String(text ?? "").trim().split(/\s+/).filter(Boolean);
+  if (!words.length) return [""];
+  const lines = [];
+  let current = "";
+  for (const word of words) {
+    const next = current ? `${current} ${word}` : word;
+    if (current && visibleWidth(next) > width) {
+      lines.push(current);
+      current = word;
+    } else {
+      current = next;
+    }
+  }
+  if (current) lines.push(current);
+  return lines;
+}
+
+function pushWrapped(lines, text, width, { indent = "   ", styler = value => value } = {}) {
+  const contentWidth = Math.max(12, width - visibleWidth(indent));
+  for (const part of wrapPlain(text, contentWidth)) lines.push(`${indent}${styler(part)}`);
+}
+
+function failureSampleText(total, confidence) {
+  const key = confidence === "low" ? "overview.sample.small" : confidence === "medium" ? "overview.sample.medium" : "overview.sample.large";
+  return t(key, { total });
+}
+
 function severityStyle(severity, text) {
   if (severity === "critical") return style.red(style.bold(text));
   if (severity === "warning") return style.yellow(style.bold(text));
@@ -114,6 +142,9 @@ function ppText(value) {
 }
 
 function alertTitle(alert) {
+  if (alert.kind === "quota-reset-due") {
+    return t("overview.alert.quotaResetDue", { provider: providerLabel(alert.provider) });
+  }
   if (alert.kind === "quota-exhausted") {
     return t("overview.alert.quotaExhausted", { provider: providerLabel(alert.provider) });
   }
@@ -147,6 +178,9 @@ function alertTitle(alert) {
   if (alert.kind === "agent-concentration") {
     return t("overview.alert.agentConcentration", { agent: alert.agentType, share: percent(alert.share) });
   }
+  if (alert.kind === "request-spike") {
+    return t("overview.alert.requestSpike", { ratio: ratioText(alert.ratio) });
+  }
   if (alert.kind === "runtime-error") {
     return t("overview.alert.runtimeError", { count: alert.errors });
   }
@@ -154,6 +188,13 @@ function alertTitle(alert) {
 }
 
 function alertDetail(alert) {
+  if (alert.kind === "quota-reset-due") {
+    return t("overview.detail.quotaResetDue", {
+      limit: alert.quota?.groupLabel || alert.quota?.label || "quota",
+      used: percent(alert.quota?.usedFraction),
+      reset: Number.isFinite(alert.quota?.resetsAt) ? formatAge(alert.quota.resetsAt) : "-",
+    });
+  }
   if (alert.kind === "quota-exhausted" || alert.kind === "quota-runway") {
     return t("overview.detail.quota", {
       limit: alert.quota?.groupLabel || alert.quota?.label || "quota",
@@ -172,20 +213,16 @@ function alertDetail(alert) {
       failed: alert.failedRequests,
       total: alert.totalRequests,
       rate: percent(alert.errorRate),
-      confidence: confidenceLabel(alert.confidence),
+      sample: failureSampleText(alert.totalRequests, alert.confidence),
     });
   }
   if (alert.kind === "cache-impact") {
-    const base = t("overview.detail.cacheImpact", {
+    return t("overview.detail.cacheImpact", {
       uncached: compactNumber(alert.uncachedInputTokens),
       share: percent(alert.uncachedShare),
       rate: percent(alert.cacheRate),
       requests: compactNumber(alert.requests),
     });
-    if (Number.isFinite(alert.comparisonRate) && Number.isFinite(alert.gap)) {
-      return `${base} · ${t("overview.detail.cachePeer", { rate: percent(alert.comparisonRate), gap: ppText(alert.gap) })}`;
-    }
-    return base;
   }
   if (alert.kind === "cache-low") {
     return t("overview.detail.cacheLow", {
@@ -210,10 +247,51 @@ function alertDetail(alert) {
   if (alert.kind === "agent-concentration") {
     return t("overview.detail.agentConcentration", { tokens: compactNumber(alert.tokens) });
   }
+  if (alert.kind === "request-spike") {
+    return t("overview.detail.requestSpike", {
+      recent: Number(alert.recentPerHour || 0).toFixed(1),
+      baseline: Number(alert.baselinePerHour || 0).toFixed(1),
+    });
+  }
   if (alert.kind === "runtime-error") {
     return t("overview.detail.runtimeError", { warnings: alert.warnings });
   }
   return "";
+}
+
+function alertEvidence(alert) {
+  const items = [];
+  if (alert.kind === "quota-runway" && Number.isFinite(alert.runwayMarginHours) && alert.runwayMarginHours > 0) {
+    items.push(t("overview.detail.quotaMargin", { margin: formatHours(alert.runwayMarginHours) }));
+  }
+  if (alert.kind === "cache-impact") {
+    if (Number.isFinite(alert.comparisonRate) && Number.isFinite(alert.gap)) {
+      if (alert.comparisonKind === "model" && alert.comparisonModel) {
+        items.push(t("overview.detail.cachePeerModel", {
+          model: alert.comparisonModel,
+          rate: percent(alert.comparisonRate),
+          gap: ppText(alert.gap),
+        }));
+      } else if (alert.comparisonKind === "siblings") {
+        items.push(t("overview.detail.cachePeerSiblings", {
+          count: alert.comparisonCount,
+          rate: percent(alert.comparisonRate),
+          gap: ppText(alert.gap),
+        }));
+      } else {
+        items.push(t("overview.detail.cachePeerMedian", {
+          rate: percent(alert.comparisonRate),
+          gap: ppText(alert.gap),
+        }));
+      }
+    }
+    const reason = alert.diagnosis?.likely?.[0];
+    if (reason) {
+      const text = renderCacheDiagnosisReason(reason);
+      if (text) items.push(t("cache.cause.prefix", { text }));
+    }
+  }
+  return items;
 }
 
 function alertAttribution(alert) {
@@ -242,11 +320,15 @@ function alertCorrelation(alert) {
 }
 
 function alertAction(alert) {
-  if (alert.severity !== "critical" && alert.severity !== "warning") return "";
+  if (alert.kind === "quota-reset-due") return t("overview.action.quotaResetDue");
   if (alert.kind === "quota-exhausted" || alert.kind === "quota-runway" || alert.kind === "quota-acceleration") {
     const target = alert.attribution?.type === "direct" ? alert.attribution.model : providerLabel(alert.provider);
-    return t("overview.action.quota", { target });
+    if (alert.actionLevel === "watch") return t("overview.action.quotaWatch", { target });
+    if (alert.actionLevel === "reduce") return t("overview.action.quotaReduce", { target });
+    return t("overview.action.quotaShift", { target });
   }
+  if (alert.kind === "request-spike") return t("overview.action.requestSpike");
+  if (alert.severity !== "critical" && alert.severity !== "warning") return "";
   if (alert.kind === "model-failure") return t("overview.action.modelFailure");
   if (alert.kind === "cache-impact") return t("overview.action.cacheImpact");
   if (alert.kind === "cache-low") return t("overview.action.cache");
@@ -273,13 +355,14 @@ function renderAttention(intelligence, width) {
     const title = alertTitle(alert);
     lines.push(truncateAnsi(` ${badge}  ${title}  ${style.dim(viewHint(alert.viewKey))}`, width));
     const detail = alertDetail(alert);
-    if (detail) lines.push(truncateAnsi(`   ${detail}`, width));
+    if (detail) pushWrapped(lines, detail, width);
+    for (const evidence of alertEvidence(alert)) pushWrapped(lines, evidence, width, { styler: style.dim });
     const correlation = alertCorrelation(alert);
-    if (correlation) lines.push(truncateAnsi(`   ${style.yellow(correlation)}`, width));
+    if (correlation) pushWrapped(lines, correlation, width, { styler: style.yellow });
     const attribution = alertAttribution(alert);
-    if (attribution) lines.push(truncateAnsi(`   ${style.dim(attribution)}`, width));
+    if (attribution) pushWrapped(lines, attribution, width, { styler: style.dim });
     const action = alertAction(alert);
-    if (action) lines.push(truncateAnsi(`   ${style.bold(action)}`, width));
+    if (action) pushWrapped(lines, action, width, { styler: style.bold });
   }
   return lines;
 }
@@ -287,8 +370,11 @@ function renderAttention(intelligence, width) {
 function capacityLine(summary) {
   const row = summary.worst;
   const provider = providerLabel(summary.provider);
-  const reset = Number.isFinite(summary.nextResetAt) ? formatUntil(summary.nextResetAt) : "-";
+  const reset = Number.isFinite(row?.resetsAt) ? formatUntil(row.resetsAt) : "-";
   if (!row) return provider;
+  if ((row.status === "exhausted" || Number(row.usedFraction) >= 1) && Number.isFinite(row.resetsAt) && row.resetsAt <= Date.now()) {
+    return style.yellow(t("overview.capacity.resetDue", { provider }));
+  }
   if (row.status === "exhausted" || Number(row.usedFraction) >= 1) {
     return style.red(t("overview.capacity.exhausted", { provider, reset }));
   }
@@ -351,7 +437,7 @@ function renderReliability(intelligence, width) {
         model: row.model,
         failed: row.failedRequests,
         total: row.totalRequests,
-        confidence: confidenceLabel(row.confidence),
+        sample: failureSampleText(row.totalRequests, row.confidence),
       });
       lines.push(` ${severityStyle(row.severity, "●")} ${text}`);
     }
