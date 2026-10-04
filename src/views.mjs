@@ -445,7 +445,7 @@ function compactAlertPrimary(alert, now = Date.now()) {
       provider,
       bucket: compactQuotaBucket(alert),
       used: percent(alert.quota?.usedFraction),
-      reset: Number.isFinite(alert.quota?.resetsAt) ? formatUntil(alert.quota.resetsAt) : "-",
+      reset: Number.isFinite(alert.quota?.resetsAt) ? formatCountdown(alert.quota.resetsAt, now) : "-",
     });
   }
   if (alert.kind === "quota-runway") {
