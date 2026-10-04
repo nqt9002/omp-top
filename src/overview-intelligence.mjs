@@ -584,6 +584,7 @@ export function buildOverviewIntelligence({ stats, quota, cacheDiagnostics, even
         severity: row.burnTrend === "spike" ? "warning" : "watch",
         urgency: Number.isFinite(row.accelerationRatio) ? Math.min(30, Math.round(row.accelerationRatio * 10)) : 5,
         confidence: Number.isFinite(row.baselineBurnPerHour) ? "high" : "medium",
+        actionLevel: Number.isFinite(row.accelerationRatio) && row.accelerationRatio >= 2 ? "reduce" : "watch",
         viewKey: "2",
         provider: summary.provider,
         quota: row,
