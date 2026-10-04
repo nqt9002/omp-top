@@ -216,3 +216,26 @@ test("narrow quota view keeps Fable identity visible instead of reducing it to a
   assert.match(screen, /Claude 7 Day \(Fable\)/);
   assert.match(screen, /Claude 7 Day/);
 });
+
+
+test("Anthropic quota view reports source coverage when scoped weekly buckets are absent", () => {
+  setLocale("en");
+  const item = report("anthropic", [
+    limit("anthropic:5h", "Claude 5 Hour", "anthropic", { scope: { shared: true, windowId: "5h" }, window: window("5h", "5 Hour") }),
+    limit("anthropic:7d", "Claude 7 Day", "anthropic", { scope: { shared: true, windowId: "7d" }, window: window("7d", "7 Day") }),
+  ]);
+  const screen = stripAnsi(renderView("quota", { quota: { reports: [item] }, providerStates: new Map(), quotaRefreshing: false }, 120).join("\n"));
+  assert.match(screen, /shared Claude quota only/);
+  assert.match(screen, /Fable\/Mythos/);
+});
+
+test("Anthropic quota view names scoped weekly buckets when OMP reports them", () => {
+  setLocale("en");
+  const item = report("anthropic", [
+    limit("anthropic:5h", "Claude 5 Hour", "anthropic", { scope: { shared: true, windowId: "5h" }, window: window("5h", "5 Hour") }),
+    limit("anthropic:7d", "Claude 7 Day", "anthropic", { scope: { shared: true, windowId: "7d" }, window: window("7d", "7 Day") }),
+    limit("anthropic:7d:fable", "Claude 7 Day (Fable)", "anthropic", { scope: { tier: "fable", windowId: "7d" }, window: window("7d", "7 Day") }),
+  ]);
+  const screen = stripAnsi(renderView("quota", { quota: { reports: [item] }, providerStates: new Map(), quotaRefreshing: false }, 120).join("\n"));
+  assert.match(screen, /model-scoped weekly quota: Fable/);
+});
