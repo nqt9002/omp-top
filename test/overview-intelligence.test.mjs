@@ -142,9 +142,8 @@ test("decision engine surfaces quota urgency, conservative workload attribution,
   assert.equal(quotaAlert.correlation.cacheLow, true);
   assert.equal(quotaAlert.correlation.workloadElevated, true);
 
-  const failure = overview.alerts.find(alert => alert.kind === "model-failure");
+  const failure = overview.reliability.failures.find(row => row.model === "claude-sonnet-5-5");
   assert.ok(failure);
-  assert.equal(failure.model, "claude-sonnet-5-5");
   assert.equal(failure.confidence, "low");
   assert.equal(failure.failedRequests, 2);
 
@@ -199,18 +198,18 @@ test("Overview renders decision-support evidence in English and Vietnamese", () 
     setLocale("en");
     const english = stripAnsi(renderView("overview", fixture, 156).join("\n"));
     assert.match(english, /ATTENTION/);
-    assert.match(english, /Codex quota may exhaust in 4h/);
-    assert.match(english, /Dominant OpenAI Codex workload: gpt-6-astra/);
-    assert.match(english, /may both be contributing/);
+    assert.match(english, /OpenAI Codex quota 80%/);
+    assert.match(english, /→ shift work · 2 Quota/);
+    assert.doesNotMatch(english, /workload attribution/);
     assert.match(english, /claude-sonnet-5-5/);
     assert.doesNotMatch(english, /TOP MODELS/);
 
     setLocale("vi");
     const vietnamese = stripAnsi(renderView("overview", fixture, 156).join("\n"));
     assert.match(vietnamese, /CẦN CHÚ Ý/);
-    assert.match(vietnamese, /Quota OpenAI Codex có thể cạn sau 4g/);
-    assert.match(vietnamese, /workload chính của OpenAI Codex là gpt-6-astra/);
-    assert.match(vietnamese, /cả hai đều có thể góp phần/);
+    assert.match(vietnamese, /OpenAI Codex quota 80%/);
+    assert.match(vietnamese, /→ chuyển tải · 2 Quota/);
+    assert.doesNotMatch(vietnamese, /đây chỉ là tín hiệu workload/);
     assert.match(vietnamese, /TÌNH TRẠNG MODEL/);
   } finally {
     setLocale(previous);
@@ -334,9 +333,9 @@ test("Vietnamese cache intelligence uses natural technical wording", () => {
       byAgentModel: [], byFolderModel: [], bySessionModel: [],
     };
     const screen = stripAnsi(renderView("overview", { stats, cacheDiagnostics: diagnostics, quota: { reports: [] }, events: [], statsState: {} }, 156).join("\n"));
-    assert.match(screen, /đang tạo lượng uncached input rất lớn/);
-    assert.match(screen, /Khuyến nghị:/);
-    assert.doesNotMatch(screen, /Quyết định:/);
+    assert.match(screen, /OpenAI Codex\/gpt-6-astra · 18\.0M uncached \(90%\)/);
+    assert.match(screen, /→ kiểm tra Cache · 4 Cache/);
+    assert.doesNotMatch(screen, /Khuyến nghị:/);
   } finally {
     setLocale(previous);
   }
@@ -433,7 +432,7 @@ test("reset-due exhausted quota asks for refresh instead of waiting for reset", 
       statsState: {},
     }, 120).join("\n"));
     assert.match(screen, /đã tới giờ reset/);
-    assert.match(screen, /làm mới Quota và chờ provider đồng bộ/);
+    assert.match(screen, /→ refresh Quota · 2 Quota/);
     assert.doesNotMatch(screen, /cho tới khi quota được reset/);
   } finally {
     setLocale(previous);
@@ -487,7 +486,7 @@ test("cache Overview evidence names a concrete sibling and strongest likely cont
       events: [],
       statsState: {},
     }, 120).join("\n"));
-    assert.match(screen, /gpt-6\.1-sol cùng provider: Cache hit 88%/);
+    assert.match(screen, /vs gpt-6\.1-sol 88%/);
     assert.match(screen, /subagent tạo 69% uncached input/);
     assert.doesNotMatch(screen, /provider\/peer/);
   } finally {
@@ -510,10 +509,20 @@ test("small model-failure samples are described as small samples, not uncertain 
       }],
     });
     const screen = stripAnsi(renderView("overview", { stats, quota: { reports: [] }, events: [], statsState: {} }, 120).join("\n"));
-    assert.match(screen, /4\/4 request lỗi/);
-    assert.match(screen, /mẫu nhỏ \(4 request\)/);
+    assert.match(screen, /lỗi 4\/4 · mẫu nhỏ/);
+    assert.doesNotMatch(screen, /chưa đủ để kết luận/);
     assert.doesNotMatch(screen, /mức chắc chắn thấp/);
   } finally {
     setLocale(previous);
   }
+});
+
+
+test("Overview stays within a compact line budget under multiple alerts", () => {
+  const fixture = decisionFixture();
+  const screen = stripAnsi(renderView("overview", fixture, 156).join("\n"));
+  const lines = screen.split("\n");
+  assert.ok(lines.length <= 26, `Overview rendered ${lines.length} lines`);
+  assert.doesNotMatch(screen, /Recommendation:/);
+  assert.doesNotMatch(screen, /workload attribution, not direct/);
 });
