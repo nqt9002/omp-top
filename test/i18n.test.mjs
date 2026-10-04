@@ -67,7 +67,7 @@ test("Vietnamese catalog localizes navigation, sections and quota timing", () =>
     setLocale("vi");
     assert.equal(localeLabel(), "Tiếng Việt");
     assert.match(stripAnsi(renderViewTabs(0, 120)), /Tổng quan/);
-    assert.match(formatReset(Date.now() + 30 * 60 * 1000), /reset ↻30p/);
+    assert.match(formatReset(Date.now() + 30 * 60 * 1000), /reset 30p/);
 
     const stats = normalizeStats({
       overall: { totalRequests: 12, cacheRate: 0.5, errorRate: 0, avgTtft: 1000, avgDuration: 2000, avgTokensPerSecond: 30, totalInputTokens: 1000, totalOutputTokens: 100, totalCost: 1.2 },
