@@ -232,3 +232,104 @@ test("Anthropic quota keeps Fable visible without source-coverage debug text", (
   assert.doesNotMatch(screen, /Nguồn OMP/);
   assert.doesNotMatch(screen, /model-scoped weekly quota/);
 });
+
+
+test("dense Antigravity quota view flattens groups and suppresses healthy intelligence noise", () => {
+  setLocale("vi");
+  const resetWeekly = now + 3 * 24 * 60 * 60 * 1000;
+  const reset5h = now + 5 * 60 * 60 * 1000;
+  const healthyIntel = {
+    sampleCount: 4,
+    status: "ok",
+    recentBurnPerHour: 0,
+    sustainablePerHour: 0.2,
+    recentPaceRatio: 0,
+  };
+  const makeAccount = accountId => report("google-antigravity", [
+    limit(accountId + ":gemini:weekly", "Gemini", "google-antigravity", {
+      scope: { accountId, windowId: "weekly" },
+      window: { id: "weekly", label: "Weekly", resetsAt: resetWeekly },
+      amount: percentAmount(0.39),
+    }),
+    { ...limit(accountId + ":gemini:5h", "Gemini", "google-antigravity", {
+      scope: { accountId, windowId: "5h" },
+      window: { id: "5h", label: "5 Hour", resetsAt: reset5h },
+      amount: percentAmount(0),
+    }), intelligence: healthyIntel },
+    { ...limit(accountId + ":shared:weekly", "Claude & GPT (shared)", "google-antigravity", {
+      scope: { accountId, shared: true, sharedGroup: accountId + ":shared:weekly", windowId: "weekly" },
+      window: { id: "weekly", label: "Weekly", resetsAt: resetWeekly },
+      amount: percentAmount(0),
+    }), intelligence: healthyIntel },
+    { ...limit(accountId + ":shared:5h", "Claude & GPT (shared)", "google-antigravity", {
+      scope: { accountId, shared: true, sharedGroup: accountId + ":shared:5h", windowId: "5h" },
+      window: { id: "5h", label: "5 Hour", resetsAt: reset5h },
+      amount: percentAmount(0),
+    }), intelligence: healthyIntel },
+  ], { metadata: { accountId } });
+
+  const screen = stripAnsi(renderView("quota", {
+    quota: { reports: [makeAccount("gr*1*"), makeAccount("gr*4*")] },
+    providerStates: new Map([["google-antigravity", { status: "fresh", updatedAt: now }]]),
+    quotaRefreshing: false,
+    quotaNextAt: now + 5 * 60 * 1000,
+    now,
+  }, 156).join("\n"));
+
+  assert.match(screen, /Gemini Weekly/);
+  assert.match(screen, /Gemini 5 Hour/);
+  assert.match(screen, /Claude & GPT \(shared\) Weekly/);
+  assert.match(screen, /Claude & GPT \(shared\) 5 Hour/);
+  assert.doesNotMatch(screen, /refresh ↻/);
+  assert.doesNotMatch(screen, /ETA -/);
+  assert.doesNotMatch(screen, /0\.0%\/h/);
+  assert.ok(screen.split("\n").length <= 15, screen);
+});
+
+test("Quota renders intelligence only for interesting risky limits", () => {
+  setLocale("en");
+  const safe = {
+    ...limit("safe", "Healthy Weekly", "openai-codex", {
+      window: { id: "safe", label: "Weekly", resetsAt: now + 7 * 24 * 60 * 60 * 1000 },
+      amount: percentAmount(0.2),
+    }),
+    intelligence: {
+      sampleCount: 5,
+      status: "ok",
+      recentBurnPerHour: 0.01,
+      sustainablePerHour: 0.02,
+      recentPaceRatio: 0.5,
+      recentProjectedExhaustAt: now + 80 * 60 * 60 * 1000,
+    },
+  };
+  const risky = {
+    ...limit("risky", "Risky Weekly", "openai-codex", {
+      window: { id: "risky", label: "Weekly", resetsAt: now + 7 * 24 * 60 * 60 * 1000 },
+      amount: percentAmount(0.4),
+    }),
+    intelligence: {
+      sampleCount: 5,
+      status: "at-risk",
+      recentBurnPerHour: 0.04,
+      sustainablePerHour: 0.005,
+      recentPaceRatio: 8,
+      recentProjectedExhaustAt: now + 15 * 60 * 60 * 1000,
+    },
+  };
+  const screen = stripAnsi(renderView("quota", {
+    quota: { reports: [report("openai-codex", [safe, risky], { metadata: { accountId: "codex" } })] },
+    providerStates: new Map([["openai-codex", { status: "fresh", updatedAt: now }]]),
+    quotaRefreshing: false,
+    quotaNextAt: now + 5 * 60 * 1000,
+    now,
+  }, 120).join("\n"));
+
+  assert.match(screen, /Healthy Weekly/);
+  assert.match(screen, /Risky Weekly/);
+  assert.match(screen, /burn 4\.0%\/h · ETA 15h · safe 0\.5%\/h · pace 8\.00×/);
+  const safeIndex = screen.indexOf("Healthy Weekly");
+  const riskyIndex = screen.indexOf("Risky Weekly");
+  const between = screen.slice(safeIndex, riskyIndex);
+  assert.doesNotMatch(between, /burn|ETA/);
+  assert.doesNotMatch(screen, /reset ↻|ETA ↻/);
+});
