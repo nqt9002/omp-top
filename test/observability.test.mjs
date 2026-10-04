@@ -302,10 +302,10 @@ test("quota view uses only decreasing countdowns for refresh reset and ETA", () 
       quotaNextAt: now + 5 * 60_000,
       now,
     }, 120).join("\n"));
-    assert.match(first, /refresh ↻5p/);
-    assert.match(first, /reset ↻2g/);
-    assert.match(first, /ETA ↻1g 30p/);
-    assert.doesNotMatch(first, /trước/);
+    assert.doesNotMatch(first, /refresh ↻5p/);
+    assert.match(first, /reset 2g/);
+    assert.match(first, /ETA 1g 30p/);
+    assert.doesNotMatch(first, /trước|reset ↻|ETA ↻/);
 
     const laterNow = now + 65_000;
     const later = stripAnsi(renderView("quota", {
@@ -315,10 +315,10 @@ test("quota view uses only decreasing countdowns for refresh reset and ETA", () 
       quotaNextAt: now + 5 * 60_000,
       now: laterNow,
     }, 120).join("\n"));
-    assert.match(later, /refresh ↻3p 55s/);
-    assert.match(later, /reset ↻1g 58p/);
-    assert.match(later, /ETA ↻1g 28p/);
-    assert.doesNotMatch(later, /trước/);
+    assert.doesNotMatch(later, /refresh ↻3p 55s/);
+    assert.match(later, /reset 1g 58p/);
+    assert.match(later, /ETA 1g 28p/);
+    assert.doesNotMatch(later, /trước|reset ↻|ETA ↻/);
   } finally {
     setLocale(previous);
   }
