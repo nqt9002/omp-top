@@ -8,6 +8,28 @@ const REQUIRED_COLUMNS = ["recorded_at", "provider", "account_key", "email", "ac
 
 function errorMessage(error) { return error instanceof Error ? error.message : String(error); }
 
+export function quotaLimitTitle(limit) {
+  let label = typeof limit?.label === "string" && limit.label.trim()
+    ? limit.label.trim()
+    : String(limit?.window?.label || limit?.scope?.windowId || limit?.id || "Quota");
+
+  const tier = typeof limit?.scope?.tier === "string" ? limit.scope.tier.trim() : "";
+  if (tier && !label.toLowerCase().includes(tier.toLowerCase())) label += ` (${tier})`;
+
+  const windowLabel = String(limit?.window?.label || limit?.scope?.windowId || "").trim();
+  if (windowLabel
+    && windowLabel.toLowerCase() !== "quota window"
+    && !label.toLowerCase().includes(windowLabel.toLowerCase())) {
+    label += ` (${windowLabel})`;
+  }
+  return label;
+}
+
+export function quotaLimitIdsForDisplay(report) {
+  return quotaDisplayGroups(report).flatMap(group => group.limits.map(limit => String(limit?.id || ""))).filter(Boolean);
+}
+
+
 export class UsageHistoryReader {
   #db;
   #hasResetsAt = false;
