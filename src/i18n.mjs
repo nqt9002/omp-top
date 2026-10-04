@@ -227,6 +227,10 @@ const EN = {
   "overview.compact.action.events": "inspect Events",
   "overview.compact.next": "→ {action} · {view}",
   "overview.compact.more": "+{count} more signal(s) in detail tabs",
+  "overview.compact.sample.small": "small sample",
+  "overview.compact.sample.medium": "medium sample",
+  "overview.compact.sample.large": "large sample",
+  "overview.compact.resetCredit": "{count} reset credit(s)",
 
   "quota.waiting": " Waiting for quota results…",
   "quota.none": " No quota data available",
@@ -554,6 +558,10 @@ const VI = {
   "overview.compact.action.events": "mở Sự kiện",
   "overview.compact.next": "→ {action} · {view}",
   "overview.compact.more": "+{count} tín hiệu khác ở các tab chi tiết",
+  "overview.compact.sample.small": "mẫu nhỏ",
+  "overview.compact.sample.medium": "mẫu vừa",
+  "overview.compact.sample.large": "mẫu lớn",
+  "overview.compact.resetCredit": "{count} lượt reset lưu",
 
   "quota.waiting": " Đang chờ kết quả Quota…",
   "quota.none": " Không có dữ liệu Quota",
