@@ -134,7 +134,7 @@ test("manual r clears old schedules and re-arms both lanes after completion", as
   app.dispose();
 });
 
-test("header shows localized freshness and next-refresh countdown", async () => {
+test("header uses countdown-only refresh timers in both locales", async () => {
   const previous = "en";
   const clock = fakeClock();
   const { app } = makeApp(clock);
@@ -144,13 +144,20 @@ test("header shows localized freshness and next-refresh countdown", async () => 
   clock.advance(18_000);
   setLocale("en");
   const english = stripAnsi(app.render(220, 32)[1]);
-  assert.match(english, /stats 18s old · ↻42s/);
-  assert.match(english, /quota 18s old · ↻5m/);
+  assert.match(english, /stats ↻42s/);
+  assert.match(english, /quota ↻4m 42s/);
+  assert.doesNotMatch(english, /old|ago/);
 
   setLocale("vi");
   const vietnamese = stripAnsi(app.render(220, 32)[1]);
-  assert.match(vietnamese, /stats 18s trước · ↻42s/);
-  assert.match(vietnamese, /quota 18s trước · ↻5p/);
+  assert.match(vietnamese, /stats ↻42s/);
+  assert.match(vietnamese, /quota ↻4p 42s/);
+  assert.doesNotMatch(vietnamese, /trước/);
+
+  clock.advance(20_000);
+  const later = stripAnsi(app.render(220, 32)[1]);
+  assert.match(later, /stats ↻22s/);
+  assert.match(later, /quota ↻4p 22s/);
 
   setLocale(previous);
   app.dispose();
