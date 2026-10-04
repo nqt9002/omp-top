@@ -123,18 +123,6 @@ function quotaProviderNote(note) {
   return text;
 }
 
-function quotaSourceCoverageNote(report) {
-  if (report?.provider !== "anthropic") return "";
-  const scoped = (report?.limits ?? [])
-    .filter(limit => !limit?.scope?.shared)
-    .map(limit => String(limit?.scope?.tier || limit?.scope?.modelId || "").trim())
-    .filter(Boolean);
-  const names = [...new Set(scoped.map(name => name.charAt(0).toUpperCase() + name.slice(1)))];
-  return names.length
-    ? t("quota.sourceAnthropicScoped", { names: names.join(", ") })
-    : t("quota.sourceAnthropicSharedOnly");
-}
-
 function quotaLimitNote(note) {
   const text = String(note ?? "").trim();
   if (/^Unlimited$/i.test(text)) return t("quota.note.unlimited");
@@ -781,8 +769,6 @@ function renderQuota(context, width) {
       const org = orgLabel(report);
       const resets = resetCreditsText(report);
       lines.push(`   ${style.cyan(identity)}${org && org !== identity ? style.dim(` · ${org}`) : ""}${plan ? style.dim(` · ${plan}`) : ""}${resets ? ` · ${style.cyan(resets)}` : ""}`);
-      const sourceCoverage = quotaSourceCoverageNote(report);
-      if (sourceCoverage) lines.push(style.dim(`     • ${sourceCoverage}`));
 
       const groups = quotaDisplayGroups(report);
       const hasLimits = groups.some(group => group.limits.length > 0);
