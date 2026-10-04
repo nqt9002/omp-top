@@ -60,7 +60,14 @@ function requestTrend(points, { recentHours = 3, baselineHours = 9 } = {}) {
   const recentPerHour = recent.reduce((sum, point) => sum + point.requests, 0) / recentHours;
   const baselinePerHour = baseline.reduce((sum, point) => sum + point.requests, 0) / baselineHours;
   const ratio = baselinePerHour >= 0.5 ? recentPerHour / baselinePerHour : undefined;
-  return { recentPerHour, baselinePerHour, ratio, latestTimestamp: latest };
+  return {
+    recentPerHour,
+    baselinePerHour,
+    ratio,
+    latestTimestamp: latest,
+    recentSamples: recent.length,
+    baselineSamples: baseline.length,
+  };
 }
 
 function modelFacts(stats) {
@@ -191,7 +198,7 @@ function providerQuotaSummaries(quotaRows, facts, now) {
     const sorted = [...rows].sort((a, b) => quotaUrgency(b, now) - quotaUrgency(a, now));
     const worst = sorted[0];
     const resets = rows.map(row => row.resetsAt).filter(value => Number.isFinite(value) && value > now);
-    const nextResetAt = resets.length ? Math.min(...resets) : undefined;
+    const earliestProviderResetAt = resets.length ? Math.min(...resets) : undefined;
     const model = facts.providers.get(provider);
     let attribution;
     if (worst?.modelId) {
@@ -212,7 +219,8 @@ function providerQuotaSummaries(quotaRows, facts, now) {
     summaries.push({
       provider,
       worst,
-      nextResetAt,
+      resetAt: worst?.resetsAt,
+      earliestProviderResetAt,
       attribution,
       modelFacts: model,
       exhaustedCount: rows.filter(row => row.status === "exhausted" || Number(row.usedFraction) >= 1).length,
@@ -387,7 +395,8 @@ function cacheSummary(stats, facts, cacheDiagnostics) {
     const siblings = diagModels
       .filter(peer => peer.provider === row.provider && peer.model !== row.model)
       .filter(peer => peer.requests >= CACHE_MIN_REQUESTS)
-      .filter(peer => peer.cacheReadTokens + peer.cacheWriteTokens > 0);
+      .filter(peer => peer.cacheReadTokens + peer.cacheWriteTokens > 0)
+      .sort((a, b) => b.requests - a.requests);
     const siblingRate = weightedCacheRate(siblings);
     const peerRates = diagModels
       .filter(peer => peer.provider !== row.provider || peer.model !== row.model)
@@ -417,6 +426,9 @@ function cacheSummary(stats, facts, cacheDiagnostics) {
       siblingCacheRate: siblingRate,
       peerMedianCacheRate: peerMedian,
       comparisonRate,
+      comparisonKind: siblings.length === 1 ? "model" : siblings.length > 1 ? "siblings" : "peer-median",
+      comparisonModel: siblings.length === 1 ? siblings[0].model : undefined,
+      comparisonCount: siblings.length > 1 ? siblings.length : undefined,
       gap,
       severity,
       diagnosis,
@@ -481,6 +493,7 @@ export function buildOverviewIntelligence({ stats, quota, cacheDiagnostics, even
   const cache = cacheSummary(stats ?? {}, facts, cacheDiagnostics);
   const agents = agentSummary(stats ?? {});
   const activity = eventSummary(events, now);
+  const systemRequestTrend = requestTrend(stats?.timeSeries);
   const alerts = [];
 
   for (const summary of capacity) {
@@ -498,6 +511,27 @@ export function buildOverviewIntelligence({ stats, quota, cacheDiagnostics, even
       requestTrendRatio,
     };
 
+    const resetDue = Number.isFinite(row.resetsAt) && row.resetsAt <= now;
+    const runwayMarginHours = Number.isFinite(row.resetsAt) && Number.isFinite(row.projectedExhaustAt)
+      ? (row.resetsAt - row.projectedExhaustAt) / HOUR_MS
+      : undefined;
+
+    if ((row.status === "exhausted" || Number(row.usedFraction) >= 1) && resetDue) {
+      pushAlert(alerts, {
+        kind: "quota-reset-due",
+        domain: "quota",
+        severity: "warning",
+        urgency: 35,
+        confidence: "high",
+        viewKey: "2",
+        provider: summary.provider,
+        quota: row,
+        attribution: summary.attribution,
+        correlation,
+      });
+      continue;
+    }
+
     if (row.status === "exhausted" || Number(row.usedFraction) >= 1) {
       pushAlert(alerts, {
         kind: "quota-exhausted",
@@ -505,6 +539,7 @@ export function buildOverviewIntelligence({ stats, quota, cacheDiagnostics, even
         severity: "critical",
         urgency: 40,
         confidence: "high",
+        actionLevel: "shift",
         viewKey: "2",
         provider: summary.provider,
         quota: row,
@@ -516,13 +551,23 @@ export function buildOverviewIntelligence({ stats, quota, cacheDiagnostics, even
 
     if (row.status === "at-risk") {
       const eta = row.etaHours;
-      const severity = Number.isFinite(eta) && eta <= 6 ? "critical" : "warning";
+      let severity = "warning";
+      let actionLevel = "reduce";
+      if ((Number.isFinite(eta) && eta <= 6) || (Number.isFinite(runwayMarginHours) && runwayMarginHours >= 24)) {
+        severity = "critical";
+        actionLevel = "shift";
+      } else if (Number.isFinite(runwayMarginHours) && runwayMarginHours < 6) {
+        severity = "watch";
+        actionLevel = "watch";
+      }
       pushAlert(alerts, {
         kind: "quota-runway",
         domain: "quota",
         severity,
         urgency: Number.isFinite(eta) ? Math.max(0, 40 - Math.min(40, eta)) : 10,
         confidence: Number.isFinite(eta) ? "high" : "medium",
+        actionLevel,
+        runwayMarginHours,
         viewKey: "2",
         provider: summary.provider,
         quota: row,
@@ -618,6 +663,23 @@ export function buildOverviewIntelligence({ stats, quota, cacheDiagnostics, even
     });
   }
 
+  if (Number.isFinite(systemRequestTrend?.ratio) && systemRequestTrend.baselineSamples >= 2) {
+    const ratio = systemRequestTrend.ratio;
+    if (ratio >= 2.5) {
+      pushAlert(alerts, {
+        kind: "request-spike",
+        domain: "system",
+        severity: ratio >= 4 ? "warning" : "watch",
+        urgency: Math.min(30, Math.round(ratio * 5)),
+        confidence: systemRequestTrend.baselineSamples >= 4 ? "high" : "medium",
+        viewKey: "3",
+        ratio,
+        recentPerHour: systemRequestTrend.recentPerHour,
+        baselinePerHour: systemRequestTrend.baselinePerHour,
+      });
+    }
+  }
+
   if (activity.errors > 0 && activity.notable) {
     pushAlert(alerts, {
       kind: "runtime-error",
@@ -647,7 +709,7 @@ export function buildOverviewIntelligence({ stats, quota, cacheDiagnostics, even
     cache,
     agents,
     activity,
-    requestTrend: requestTrend(stats?.timeSeries),
+    requestTrend: systemRequestTrend,
     modelFacts: facts,
   };
 }
