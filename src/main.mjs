@@ -35,6 +35,7 @@ ${t("cli.language")}:
 ${t("cli.monitor")}:
   --profile NAME       ${t("cli.profile")}
   --redact             ${t("cli.redact")}
+  --notify             ${t("cli.notify")}
   --quota-timeout MS   ${t("cli.quotaTimeout")}
   -v, --version        ${t("cli.version")}
   -h, --help           ${t("cli.help")}
@@ -101,7 +102,7 @@ if (!process.stdin?.isTTY || !process.stdout?.isTTY) {
 }
 const version = await readPackageVersion();
 const { OmpTopApp } = await import('./top.mjs');
-const app = new OmpTopApp({ redact: options.redact, version, channel: versionChannel(version) });
+const app = new OmpTopApp({ redact: options.redact, notify: options.notify, version, channel: versionChannel(version) });
 const cleanup = () => app.dispose();
 process.once('exit', cleanup);
 try { await app.run(); }

@@ -14,6 +14,12 @@ export const style = {
   inverse: text => ansi("7", text),
 };
 
+// Data can contain newlines or terminal controls; only renderer SGR styling is retained.
+export function safeTerminalText(text) {
+  return String(text).replace(ANSI_RE, sequence => /^\x1b\[[0-9;]*m$/u.test(sequence) ? sequence : "")
+    .split(/(\x1b\[[0-9;]*m)/u).map(part => /^\x1b\[[0-9;]*m$/u.test(part) ? part
+      : part.replace(/[\r\n]/gu, " ↵ ").replace(/[\x00-\x1f\x7f-\x9f]/gu, " ")).join("");
+}
 export function stripAnsi(text) { return text.replace(ANSI_RE, ""); }
 export function visibleWidth(text) {
   const plain = stripAnsi(text);
@@ -24,9 +30,15 @@ export function truncateAnsi(text, width) {
   if (width <= 0) return "";
   if (visibleWidth(text) <= width) return text;
   const plain = stripAnsi(text);
-  const chars = [...plain];
-  if (chars.length <= width) return plain;
-  return chars.slice(0, Math.max(0, width - 1)).join("") + "…";
+  let clipped = "";
+  let used = 0;
+  for (const { segment } of new Intl.Segmenter(undefined, { granularity: "grapheme" }).segment(plain)) {
+    const size = visibleWidth(segment);
+    if (used + size > width - 1) break;
+    clipped += segment;
+    used += size;
+  }
+  return clipped + "…";
 }
 export function padRight(text, width) {
   const w = visibleWidth(text);

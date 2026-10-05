@@ -6,10 +6,10 @@ import {
 } from "../src/layout.mjs";
 import { stripAnsi, visibleWidth } from "../src/format.mjs";
 
-test("workspace expands beyond the old 112-column canvas and centers at the wide cap", () => {
+test("workspace uses terminal width instead of a fixed centered canvas", () => {
   assert.deepEqual(workspaceGeometry(60), { physical: 60, width: 60, offset: 0, innerWidth: 56, mode: "compact" });
   assert.deepEqual(workspaceGeometry(112), { physical: 112, width: 112, offset: 0, innerWidth: 108, mode: "normal" });
-  assert.deepEqual(workspaceGeometry(220), { physical: 220, width: 160, offset: 30, innerWidth: 156, mode: "wide" });
+  assert.deepEqual(workspaceGeometry(220), { physical: 220, width: 220, offset: 0, innerWidth: 216, mode: "wide" });
 });
 
 test("frame primitives keep stable width", () => {
@@ -37,4 +37,16 @@ test("metric grid becomes denser as width grows", () => {
   const wide = renderMetricGrid(metrics, 150);
   assert.ok(compact.length > wide.length);
   assert.ok(wide.join("\n").includes("M5"));
+});
+
+test('long terminal messages preserve text without executing embedded cursor or link controls', async () => {
+  const { wrapLines } = await import('../src/layout.mjs');
+  const { safeTerminalText } = await import('../src/format.mjs');
+  const input = 'before\x1b[2J\x1b]8;;https://example.test\x07label\x1b]8;;\x07\nafter';
+  const clean = safeTerminalText(input);
+  assert.doesNotMatch(clean, /\x1b\[2J|\x1b\]|\x07|\n/);
+  assert.match(clean, /beforelabel.*after/);
+  const lines = wrapLines([input], 12);
+  assert.ok(lines.every(line => visibleWidth(line) <= 12));
+  assert.ok(lines.join('').includes('after'));
 });

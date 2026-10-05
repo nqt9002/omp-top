@@ -83,7 +83,7 @@ function modelFacts(stats) {
 
   const seriesByModel = new Map();
   const seriesByProvider = new Map();
-  for (const point of stats?.modelSeries ?? []) {
+  for (const point of (stats?.windowHours ? [] : stats?.modelSeries ?? [])) {
     const provider = String(point?.provider ?? "unknown");
     const model = String(point?.model ?? "unknown");
     const key = modelKey(provider, model);
@@ -287,6 +287,7 @@ function reliabilitySummary(models) {
   }
 
   return {
+    measuredModels: models.filter(row => Number.isFinite(row.errorRate)).length,
     activeModels: models.filter(row => row.totalRequests > 0).length,
     failures,
     unhealthyModels: new Set(failures.map(row => modelKey(row.provider, row.model))).size,
@@ -455,20 +456,21 @@ function cacheSummary(stats, facts, cacheDiagnostics) {
 }
 function agentSummary(stats) {
   const rows = (stats?.byAgentType ?? []).map(row => ({ ...row, tokens: tokenTotal(row) }));
+  const completeTokens = (stats?.byAgentType ?? []).every(row => Number.isFinite(row.totalOutputTokens));
   const total = rows.reduce((sum, row) => sum + row.tokens, 0);
   const shares = rows
     .map(row => ({ ...row, share: total > 0 ? row.tokens / total : 0 }))
     .sort((a, b) => b.share - a.share);
   const alerts = [];
   for (const row of shares) {
-    if (total < 10_000) continue;
+    if (!completeTokens || total < 10_000) continue;
     if (row.agentType === "advisor" && row.share >= 0.25) {
       alerts.push({ severity: row.share >= 0.4 ? "warning" : "watch", row });
     } else if (row.agentType === "subagent" && row.share >= 0.7) {
       alerts.push({ severity: "watch", row });
     }
   }
-  return { totalTokens: total, shares, alerts };
+  return { totalTokens: total, shares, alerts, completeTokens };
 }
 
 function eventSummary(events, now) {
@@ -493,7 +495,7 @@ export function buildOverviewIntelligence({ stats, quota, cacheDiagnostics, even
   const cache = cacheSummary(stats ?? {}, facts, cacheDiagnostics);
   const agents = agentSummary(stats ?? {});
   const activity = eventSummary(events, now);
-  const systemRequestTrend = requestTrend(stats?.timeSeries);
+  const systemRequestTrend = stats?.windowHours ? undefined : requestTrend(stats?.timeSeries);
   const alerts = [];
 
   for (const summary of capacity) {

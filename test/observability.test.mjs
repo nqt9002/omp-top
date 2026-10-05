@@ -201,7 +201,7 @@ test("app switches views with number, Tab and Shift+Tab without treating Shift+T
   app.dispose();
 });
 
-test("responsive shell stays inside physical width and centers wide workspaces", () => {
+test("responsive shell uses wide workspaces without overflowing", () => {
   const fakeUi = { rows: 32, start() {}, stop() {}, draw() {} };
   const app = new OmpTopApp({ version: "0.6.0-beta.2", channel: "beta", ui: fakeUi, deps: {
     fetchStats: async () => ({ overall: {}, byModel: [] }), loadHistoricalQuota: async () => ({ payload: undefined }), createQuotaRefresh: () => ({ cancel() {}, run: async () => {} }),
@@ -214,9 +214,9 @@ test("responsive shell stays inside physical width and centers wide workspaces",
     assert.ok(stripAnsi(lines.at(-1)).trimStart().startsWith("╰"));
   }
   const wide = app.render(220, 32);
-  assert.ok(stripAnsi(wide[0]).startsWith(" ".repeat(30) + "╭"));
+  assert.ok(stripAnsi(wide[0]).startsWith("╭"));
   assert.match(stripAnsi(wide[1]), /▌ Overview/);
-  assert.match(stripAnsi(wide.at(-2)), /1–6 view/);
+  assert.match(stripAnsi(wide.at(-2)), /Enter inspect/);
   app.dispose();
 });
 

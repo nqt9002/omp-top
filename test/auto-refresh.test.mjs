@@ -143,19 +143,19 @@ test("header uses countdown-only refresh timers in both locales", async () => {
 
   clock.advance(18_000);
   setLocale("en");
-  const english = stripAnsi(app.render(220, 32)[1]);
+  const english = stripAnsi(app.render(220, 32)[2]);
   assert.match(english, /stats ↻42s/);
   assert.match(english, /quota ↻4m 42s/);
   assert.doesNotMatch(english, /old|ago/);
 
   setLocale("vi");
-  const vietnamese = stripAnsi(app.render(220, 32)[1]);
+  const vietnamese = stripAnsi(app.render(220, 32)[2]);
   assert.match(vietnamese, /stats ↻42s/);
   assert.match(vietnamese, /quota ↻4p 42s/);
   assert.doesNotMatch(vietnamese, /trước/);
 
   clock.advance(20_000);
-  const later = stripAnsi(app.render(220, 32)[1]);
+  const later = stripAnsi(app.render(220, 32)[2]);
   assert.match(later, /stats ↻22s/);
   assert.match(later, /quota ↻4p 22s/);
 
