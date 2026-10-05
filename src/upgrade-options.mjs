@@ -24,7 +24,7 @@ export function upgradeDecision(current, target, selection) {
 }
 
 export function parseOptions(argv) {
-  const result = { command: 'run', redact: false, profile: undefined, quotaTimeout: undefined, channel: undefined, tag: undefined, language: undefined, help: false, version: false };
+  const result = { command: 'run', redact: false, notify: false, profile: undefined, quotaTimeout: undefined, channel: undefined, tag: undefined, language: undefined, help: false, version: false };
   let commandSet = false;
   const seen = new Set();
   const once = name => { if (seen.has(name)) throw new Error(t("cli.errorDuplicate", { name })); seen.add(name); };
@@ -40,6 +40,7 @@ export function parseOptions(argv) {
       result.command = arg; commandSet = true; continue;
     }
     if (result.command === 'language' && result.language === undefined && !arg.startsWith('-')) { result.language = arg; continue; }
+    if (arg === '--notify') { once(arg); result.notify = true; continue; }
     if (arg === '--redact') { result.redact = true; continue; }
     if (arg === '--profile') { once(arg); result.profile = valueAt(i++, arg); continue; }
     if (arg === '--quota-timeout') {
@@ -53,6 +54,7 @@ export function parseOptions(argv) {
     if (arg === '-v' || arg === '--version') { result.version = true; continue; }
     throw new Error(t("cli.errorUnknown", { arg }));
   }
+  if (result.notify && result.command !== "run") throw new Error("--notify is only valid for the monitor");
   upgradeSelection(result); // Validate before any network or filesystem mutation.
   if (result.command !== 'upgrade' && (result.channel !== undefined || result.tag !== undefined)) throw new Error(t("cli.errorUpgradeOptions"));
   if (result.command !== 'language' && result.language !== undefined) throw new Error(t("cli.errorLanguageValue"));

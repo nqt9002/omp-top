@@ -2,7 +2,7 @@ import { aggregateCacheByProvider, cacheRate, sortModels } from "./stats.mjs";
 import { modelPerformanceRows } from "./intelligence.mjs";
 import { buildOverviewIntelligence } from "./overview-intelligence.mjs";
 import { quotaDisplayGroups, quotaLimitTitle } from "./quota.mjs";
-import { joinColumns, renderMetricGrid, sectionTitle } from "./layout.mjs";
+import { contentGeometry, joinColumns, joinPanels, renderMetricGrid, sectionTitle, wrapLines } from "./layout.mjs";
 import { t } from "./i18n.mjs";
 import {
   style, compactNumber, percent, providerLabel, usedFraction, quotaColor, cacheColor,
@@ -38,14 +38,19 @@ export function renderViewTabs(activeIndex, width) {
   const pieces = VIEWS.map((view, index) => {
     if (compact) {
       return index === activeIndex
-        ? `${style.cyan("▌")}${style.inverse(` ${t(view.shortKey)} `)}`
+        ? `${style.cyan("▌")}${style.inverse(` ${view.key} ${t(view.shortKey)} `)}`
         : `${style.dim(view.key)}:${t(view.shortKey)}`;
     }
     return index === activeIndex
       ? `${style.cyan("▌")}${style.inverse(` ${t(view.labelKey)} `)}${style.dim(` ${view.key}`)}`
       : `${style.dim(view.key)} ${t(view.labelKey)}`;
   });
-  return truncateAnsi(pieces.join(compact ? "  " : "   "), width);
+  const full = pieces.join(compact ? "  " : "   ");
+  if (visibleWidth(full) <= width) return full;
+  // All six destinations remain reachable/visible, even with longer translations.
+  const active = `${style.cyan("▌")}${style.inverse(` ${VIEWS[activeIndex].key} ${t(VIEWS[activeIndex].shortKey)} `)}`;
+  const compactTabs = VIEWS.map((view, index) => index === activeIndex ? active : style.dim(view.key)).join(" ");
+  return truncateAnsi(compactTabs, width);
 }
 
 export function statsStateText({ stats, refreshing, startedAt, updatedAt, error, now = Date.now() }) {
@@ -478,7 +483,7 @@ function quotaEtaCountdown(quota, now = Date.now()) {
   return Number.isFinite(projected) ? formatCountdown(projected, now) : "-";
 }
 
-function compactAlertPrimary(alert, now = Date.now()) {
+export function compactAlertPrimary(alert, now = Date.now()) {
   const provider = alert.provider ? providerLabel(alert.provider) : "";
   if (alert.kind === "quota-reset-due") {
     return t("overview.compact.quotaResetDue", {
@@ -580,7 +585,7 @@ function compactActionKey(alert) {
   return undefined;
 }
 
-function compactAlertSecondary(alert) {
+export function compactAlertSecondary(alert) {
   const actionKey = compactActionKey(alert);
   if (!actionKey) return "";
   const action = t(`overview.compact.action.${actionKey}`);
@@ -613,9 +618,9 @@ function renderAttention(intelligence, width, now = Date.now()) {
 
   for (const alert of intelligence.alerts) {
     const badge = severityStyle(alert.severity, severityLabel(alert.severity));
-    lines.push(truncateAnsi(` ${badge}  ${compactAlertPrimary(alert, now)}`, width));
+    lines.push(...wrapLines([` ${badge}  ${compactAlertPrimary(alert, now)}`], width));
     const secondary = compactAlertSecondary(alert);
-    if (secondary) lines.push(truncateAnsi(`   ${style.bold(secondary)}`, width));
+    if (secondary) lines.push(...wrapLines([`   ${style.bold(secondary)}`], width));
   }
   const hidden = Math.max(0, Number(intelligence.alertCount || 0) - intelligence.alerts.length);
   if (hidden > 0) lines.push(style.dim(` ${t("overview.compact.more", { count: hidden })}`));
@@ -664,11 +669,12 @@ function renderCapacity(intelligence, width, now = Date.now()) {
 
 function renderReliability(intelligence, width) {
   const lines = [sectionTitle(t("section.modelReliability"), width, style.dim(viewHint("3")))];
-  lines.push(t("overview.model.summary", {
-    active: intelligence.reliability.activeModels,
-    unhealthy: intelligence.reliability.unhealthyModels,
-  }));
-  if (!intelligence.reliability.failures.length) {
+  lines.push(intelligence.reliability.measuredModels < intelligence.reliability.activeModels
+    ? t("window.reliabilityCoverage", { measured: intelligence.reliability.measuredModels, active: intelligence.reliability.activeModels })
+    : t("overview.model.summary", { active: intelligence.reliability.activeModels, unhealthy: intelligence.reliability.unhealthyModels }));
+  if (intelligence.reliability.measuredModels === 0 && intelligence.reliability.activeModels > 0) {
+    lines.push(style.dim(t("window.noReliability")));
+  } else if (!intelligence.reliability.failures.length) {
     lines.push(style.green(` ✓ ${t("overview.model.healthy")}`));
   } else {
     for (const row of intelligence.reliability.failures.slice(0, 2)) {
@@ -699,6 +705,7 @@ function renderWorkload(intelligence, width) {
     lines.push(style.dim(t("overview.workload.none")));
     return lines;
   }
+  if (!intelligence.agents.completeTokens) return [...lines, style.dim(t("window.partialTokens"))];
   lines.push(` ${intelligence.agents.shares.slice(0, 3).map(row => `${row.agentType} ${percent(row.share)}`).join(" · ")}`);
   return lines;
 }
@@ -725,7 +732,7 @@ function renderSystemContext(context, intelligence, width) {
   const o = context.stats.overall ?? {};
   const items = [
     t("overview.system.requests", { value: compactNumber(Number(o.totalRequests || 0)) }),
-    t("overview.system.errors", { value: percent(Number(o.errorRate || 0)) }),
+    t("overview.system.errors", { value: percent(Number(o.errorRate)) }),
     t("overview.system.ttft", { value: formatDuration(Number(o.avgTtft)) }),
     t("overview.system.tps", { value: Number.isFinite(Number(o.avgTokensPerSecond)) ? Number(o.avgTokensPerSecond).toFixed(1) : "-" }),
     t("overview.system.cost", { value: formatMoney(Number(o.totalCost)) }),
@@ -867,10 +874,12 @@ function renderQuota(context, width) {
           const compactQuota = width < 90;
 
           if (compactQuota) {
-            lines.push(`${indent}${truncateAnsi(title, Math.max(12, width - visibleWidth(indent)))}`);
+            lines.push(...wrapLines([`${indent}${title}`], width));
             lines.push(`${indent}  ${bar} ${pct} ${reset}`.trimEnd());
           } else {
-            lines.push(`${indent}${tableCell(title, labelWidth)} ${bar} ${pct} ${reset}`.trimEnd());
+            const longTitle = visibleWidth(title) > labelWidth;
+            if (longTitle) lines.push(...wrapLines([`${indent}${title}`], width));
+            lines.push(`${indent}${tableCell(longTitle ? "" : title, labelWidth)} ${bar} ${pct} ${reset}`.trimEnd());
           }
 
           const detailIndent = compactQuota ? `${indent}  ` : `${indent}${" ".repeat(Math.min(labelWidth + 1, 43))}`;
@@ -894,6 +903,7 @@ function renderModels(context, width) {
   const rows = modelPerformanceRows(context.stats);
   const lines = [sectionTitle(t("section.modelPerformance"), width)];
   lines.push(style.dim(t("models.apiNote")));
+  if (context.ompStats) lines.push(style.dim(t("window.inspectOmp")));
   if (!rows.length) { lines.push(style.dim(t("models.none"))); return lines; }
   if (width < 96) {
     for (const row of rows) {
@@ -945,7 +955,7 @@ function renderCacheDiagnosisReason(reason) {
   return "";
 }
 
-function renderCache(context, width) {
+function renderCache(context, width, { diagnosticsOnly = false, summaryOnly = false } = {}) {
   const stats = context.stats;
   const lines = [sectionTitle(t("section.cacheEfficiency"), width)];
   if (!stats) { lines.push(style.dim(t("overview.statsNotLoaded"))); return lines; }
@@ -954,7 +964,7 @@ function renderCache(context, width) {
     { label: style.dim(t("metric.overallHit")), value: cacheColor(Number(o.cacheRate || 0), percent(Number(o.cacheRate || 0))) },
     { label: style.dim(t("metric.cacheRead")), value: compactNumber(Number(o.totalCacheReadTokens || 0)) },
     { label: style.dim(t("metric.cacheWrite")), value: compactNumber(Number(o.totalCacheWriteTokens || 0)) },
-    { label: style.dim(t("metric.savings")), value: percent(Number(o.cacheSavings || 0)) },
+    { label: style.dim(t("metric.savings")), value: percent(Number(o.cacheSavings)) },
   ], width));
 
   const providers = aggregateCacheByProvider(stats.byModel);
@@ -997,12 +1007,14 @@ function renderCache(context, width) {
         const hit = percent(rate).padStart(7);
         const read = compactNumber(Number(row.totalCacheReadTokens || 0)).padStart(8);
         const write = compactNumber(Number(row.totalCacheWriteTokens || 0)).padStart(8);
-        const save = percent(Number(row.cacheSavings || 0)).padStart(7);
+        const save = percent(Number(row.cacheSavings)).padStart(7);
         lines.push(`  ${tableCell(providerLabel(String(row.provider ?? "unknown")), providerWidth)} ${tableCell(String(row.model ?? "unknown"), modelWidth)} ${req} ${cacheColor(rate, hit)} ${read} ${write} ${save}`);
       }
     }
   }
 
+  if (summaryOnly) return lines;
+  if (diagnosticsOnly) lines.length = 0;
   const diagnostics = context.cacheDiagnostics;
   if (!diagnostics) {
     lines.push("", style.dim(t("cache.diagUnavailable")));
@@ -1077,15 +1089,16 @@ function renderAgents(context, width) {
     return lines;
   }
   const sorted = [...rows].sort((a, b) => Number(b.totalRequests || 0) - Number(a.totalRequests || 0));
+  const completeTokens = rows.every(row => Number.isFinite(row.totalOutputTokens));
   const totalTokens = rows.reduce((sum, row) => sum + Number(row.totalInputTokens || 0) + Number(row.totalOutputTokens || 0), 0);
   if (width < 96) {
     for (const row of sorted) {
       const tokens = Number(row.totalInputTokens || 0) + Number(row.totalOutputTokens || 0);
-      const share = percent(totalTokens > 0 ? tokens / totalTokens : 0);
+      const share = (completeTokens ? percent(totalTokens > 0 ? tokens / totalTokens : 0) : "-");
       const cache = percent(cacheRate(Number(row.totalInputTokens || 0), Number(row.totalCacheReadTokens || 0)));
       lines.push("", ` ${style.bold(String(row.agentType ?? row.type ?? "unknown"))}`);
       lines.push(`   ${t("common.req")} ${compactNumber(Number(row.totalRequests || 0))} · ${t("common.share")} ${share} · ${t("common.cache")} ${cache}`);
-      lines.push(style.dim(`   ${t("common.input")} ${compactNumber(Number(row.totalInputTokens || 0))} · ${t("common.output")} ${compactNumber(Number(row.totalOutputTokens || 0))} · ${t("metric.apiEst")} ${formatMoney(Number(row.totalCost))}`));
+      lines.push(style.dim(`   ${t("common.input")} ${compactNumber(Number(row.totalInputTokens || 0))} · ${t("common.output")} ${compactNumber(Number(row.totalOutputTokens))} · ${t("metric.apiEst")} ${formatMoney(Number(row.totalCost))}`));
     }
     return lines;
   }
@@ -1096,9 +1109,9 @@ function renderAgents(context, width) {
     const name = tableCell(String(row.agentType ?? row.type ?? "unknown"), nameWidth);
     const req = compactNumber(Number(row.totalRequests || 0)).padStart(7);
     const tokens = Number(row.totalInputTokens || 0) + Number(row.totalOutputTokens || 0);
-    const share = percent(totalTokens > 0 ? tokens / totalTokens : 0).padStart(7);
+    const share = (completeTokens ? percent(totalTokens > 0 ? tokens / totalTokens : 0) : "-").padStart(7);
     const input = compactNumber(Number(row.totalInputTokens || 0)).padStart(9);
-    const output = compactNumber(Number(row.totalOutputTokens || 0)).padStart(9);
+    const output = compactNumber(Number(row.totalOutputTokens)).padStart(9);
     const cache = percent(cacheRate(Number(row.totalInputTokens || 0), Number(row.totalCacheReadTokens || 0))).padStart(7);
     const cost = formatMoney(Number(row.totalCost)).padStart(10);
     lines.push(`  ${name} ${req} ${share} ${input} ${output} ${cache} ${cost}`);
@@ -1117,7 +1130,7 @@ function renderEvents(context, width) {
     if (event.level === "error") label = style.red(level);
     else if (event.level === "warn") label = style.yellow(level);
     else if (event.level === "ok") label = style.green(level);
-    lines.push(truncateAnsi(` ${formatClock(event.at)}  ${label}  ${event.message}`, width));
+    lines.push(...wrapLines([` ${formatClock(event.at)}  ${label}  ${event.message}`], width));
   }
   return lines;
 }
@@ -1129,4 +1142,44 @@ export function renderView(viewId, context, width) {
   if (viewId === "agents") return renderAgents(context, width);
   if (viewId === "events") return renderEvents(context, width);
   return renderOverview(context, width);
+}
+
+// Composition is separate from telemetry renderers: short terminals retain one reading lane.
+export function renderWorkspace(viewId, context, width, height) {
+  const { split, mainWidth, detailWidth } = contentGeometry(width, height);
+  if (!split) return wrapLines(renderView(viewId, context, width), width);
+
+  const now = context.now ?? Date.now();
+  const intelligence = buildOverviewIntelligence({ ...context, now });
+  if (viewId === "overview") {
+    const main = [
+      ...renderAttention(intelligence, mainWidth, now), "",
+      ...renderCapacity(intelligence, mainWidth, now), "",
+      ...renderCacheSignals(intelligence, mainWidth),
+    ];
+    const detail = [
+      ...renderSystemContext(context, intelligence, detailWidth), "",
+      ...renderReliability(intelligence, detailWidth), "",
+      ...renderWorkload(intelligence, detailWidth), "",
+      ...renderActivity(intelligence, detailWidth),
+    ];
+    return joinPanels(main, detail, mainWidth, detailWidth);
+  }
+
+  if (viewId === "cache") {
+    const main = renderCache(context, mainWidth, { summaryOnly: true });
+    const detail = context.stats ? renderCache(context, detailWidth, { diagnosticsOnly: true }) : [];
+    return joinPanels(main, detail, mainWidth, detailWidth);
+  }
+
+  const main = renderView(viewId, context, mainWidth);
+  const signal = viewId === "models" ? renderReliability(intelligence, detailWidth)
+    : viewId === "agents" ? renderWorkload(intelligence, detailWidth)
+    : renderAttention(intelligence, detailWidth, now);
+  const detail = [
+    ...signal, "",
+    ...renderSystemContext(context, intelligence, detailWidth), "",
+    ...renderActivity(intelligence, detailWidth),
+  ];
+  return joinPanels(main, detail, mainWidth, detailWidth);
 }

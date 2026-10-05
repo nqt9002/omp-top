@@ -134,8 +134,8 @@ await test("wide terminal keeps header metadata inside logical dashboard width",
     },
   });
   const header = app.render(240, 28)[0].replace(/\x1b\[[0-9;]*m/g, "");
-  assert.ok(header.startsWith(" ".repeat(40) + "╭"));
-  assert.equal(header.trimStart().length, 160);
+  assert.ok(header.startsWith("╭"));
+  assert.equal(header.length, 240);
   app.dispose();
 });
 

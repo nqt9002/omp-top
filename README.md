@@ -98,11 +98,66 @@ The quota interval is intentionally not user-configurable. Very aggressive provi
 | `Tab`, `→` | Next view |
 | `Shift+Tab`, `←` | Previous view |
 | `r` | Refresh stats and quota |
-| `↑` / `↓`, `j` / `k` | Scroll current view |
-| `PgUp` / `PgDn` | Page scroll |
+| `Enter` | Inspect rows; follow a selected alert, model, or project |
+| `/` | Search rows (Enter applies, Esc cancels, Ctrl+U clears) |
+| `s` / `f` | Cycle sorting / provider filter while inspecting |
+| `c` / `b` | Clear search/provider filter / return from drill-down |
+| `w` | Cycle local statistics window: 1h / 6h / 24h |
+| `v` | Toggle previous-window comparison |
+| `n` | Toggle local quota notifications (default off) |
+| `?` | Show interaction help |
+| `↑` / `↓`, `j` / `k` | Scroll dashboard, or select a row while inspecting |
+| `PgUp` / `PgDn` | Page dashboard/comparison, or scroll full row detail |
 | `Home` / `End` | Jump to top/bottom |
-| `q` / `Esc` | Exit |
+| `q` / `Esc` | Exit; Esc first cancels search or returns from comparison/inspection |
 | `Ctrl+C` / `Ctrl+D` | Exit |
+
+### Terminal layout
+
+The workspace follows the terminal width instead of centering a fixed 160-column canvas. Layout responds to terminal columns and rows, rather than display pixels.
+
+- At 180 columns or wider and 24 rows or taller, views use a bounded main reading area plus a contextual panel. Overview separates actionable signals from system context; Cache separates aggregate tables from diagnostics. Other views keep related signals alongside their primary data.
+- Smaller or shorter terminals use a single reading area. Very short terminals reduce header decoration to leave room for content.
+- Navigation and refresh countdowns occupy separate rows, keeping all six view shortcuts accessible in English and Vietnamese.
+- Long quota labels, alert text and event messages wrap instead of losing their ends. Model table cells still use ellipses when identifiers exceed their column width.
+- Press `Enter` to inspect rows: arrows select a row, PgUp/PgDn scroll its full detail, and Escape returns to the dashboard. Selection persists across view switches and resize.
+- Switching views restores each view's scroll position. Page scrolling follows the current viewport height.
+
+### Search and drill-down
+
+Press `Enter` to inspect the current view. Full model/account/project/session identifiers remain available in the detail area even when the row list shortens them. Enter on an Overview alert selects its provider/model or exact quota account/bucket. Models and Cache model rows lead to projects, and project rows lead to sessions. `b` restores the previous selection and query.
+
+`/` accepts free text and field filters, combined with AND:
+
+```text
+provider:openai-codex model:gpt
+project:"/workspace/project with spaces" session:session-id
+agent:worker
+```
+
+`f` cycles the available providers. `s` cycles source order, name, requests, and usage; usage means quota fraction for quota rows or uncached/input tokens for workload rows. These controls filter the inspection list, not the profile-wide comparison. Missing local project/session diagnostics are reported explicitly.
+
+### Time windows and comparison
+
+`w` cycles 1h, 6h, and 24h (default). Window reads use timestamped `stats.db` request records with exact half-open bounds `[start, end)`, not quota snapshots. They do not trigger additional provider quota polls.
+
+When local records are available, request/cache metrics and attribution follow the selected window. OMP's default-24h error/latency/cost metrics remain accessible in model detail as a separately labeled aggregate; they are not attributed to a 1h/6h local window. Missing fields display as unavailable rather than invented zeros. At 24h, OMP aggregate statistics remain a labeled fallback if local window reads fail; a failed 1h/6h read never substitutes a 24h aggregate.
+
+`v` compares recorded request counts and input/cache tokens against the preceding equal-duration window. Comparison requires valid counters and local records extending to the previous start. It describes **observed local records only**: the oldest record does not prove continuous ingestion or complete provider activity. A zero previous baseline does not produce a percentage change. Comparison covers the whole profile; inspection searches/provider filters do not change it.
+
+Quota always remains the current provider snapshot. Choosing a stats window does not invent quota history or reassign shared quota usage to a model/session.
+
+### Local quota notifications
+
+Notifications are **off by default** and opt-in for the current process:
+
+```bash
+omp-top --notify
+```
+
+Alternatively, press `n` while running. A new fresh at-risk/exhausted quota observation adds a local Events entry and emits the terminal bell (audibility depends on the terminal). No desktop service, webhook, email, or other external destination is invoked.
+
+The policy rejects stale/future/unknown timestamps, failed or refreshing providers, expired resets, and unsupported historical forecasts. Repeated observations are deduplicated by account/bucket and cycle; a healthy recovery or severity escalation permits a subsequent alert. Toggling on does not replay the previously displayed snapshot, and bootstrap history does not notify. Deduplication is in memory for the current process; no account identifiers are persisted for notifications.
 
 ## Language
 
@@ -246,7 +301,7 @@ This avoids averaging model percentages incorrectly.
 
 ### Cache diagnostics
 
-After `omp stats --json` finishes syncing session statistics, omp-top opens OMP's `stats.db` **read-only** and aggregates the same 24-hour decision window used by the default stats command.
+After `omp stats --json` finishes syncing session statistics, omp-top opens OMP's `stats.db` **read-only**. The window reader aggregates the selected 1h/6h/24h range within one read transaction, preserving complete project/session attribution. It validates required token counters; incomplete or invalid current counters make the window unavailable, and invalid previous counters disable comparison only. The original 24h diagnostics remain a fallback when the window reader is unavailable.
 
 The diagnostic layer treats OMP's `input_tokens` column as uncached input because OMP stores cache-read tokens separately. This makes it possible to identify whether uncached input is concentrated in a particular model, agent type, project, or session without reading prompt contents.
 
@@ -374,7 +429,7 @@ OMP_TOP_STATS_DB       optional stats.db override for diagnostics/testing
 
 - Cache statistics are available by provider/model, not by individual OAuth account, because OMP session stats do not carry a stable credential identity.
 - Shared quota history usually does not identify the exact model that consumed quota. Overview therefore distinguishes direct model-scoped quota from inferred dominant workload.
-- OMP's current 24h stats expose aggregate cache efficiency but not a historical cache-rate series, so omp-top can flag low cache and correlate it with quota pressure, but does not claim a cache-rate trend unless the source data supports one.
+- Local request/cache comparisons require compatible timestamped `stats.db` records. They do not establish continuous collection, complete account activity, or quota history. A partial window is never extrapolated into a full baseline trend.
 - Progressive quota depends on local `usage_history`. Auth-broker setups that do not maintain local history may only show the final quota result.
 - `omp-top` depends on OMP's user-facing JSON CLI contracts. If those contracts change incompatibly, `omp-top` may need an update.
 
