@@ -39,13 +39,13 @@ export function renderViewTabs(activeIndex, width) {
     if (compact) {
       return index === activeIndex
         ? `${style.cyan("▌")}${style.inverse(` ${view.key} ${t(view.shortKey)} `)}`
-        : `${style.dim(view.key)}:${t(view.shortKey)}`;
+        : ` ${style.dim(view.key)} ${t(view.shortKey)} `;
     }
     return index === activeIndex
-      ? `${style.cyan("▌")}${style.inverse(` ${t(view.labelKey)} `)}${style.dim(` ${view.key}`)}`
-      : `${style.dim(view.key)} ${t(view.labelKey)}`;
+      ? `${style.cyan("▌")}${style.inverse(` ${view.key} ${t(view.labelKey)} `)}`
+      : ` ${style.dim(view.key)} ${t(view.labelKey)} `;
   });
-  const full = pieces.join(compact ? "  " : "   ");
+  const full = pieces.join(compact ? "" : " ");
   if (visibleWidth(full) <= width) return full;
   // All six destinations remain reachable/visible, even with longer translations.
   const active = `${style.cyan("▌")}${style.inverse(` ${VIEWS[activeIndex].key} ${t(VIEWS[activeIndex].shortKey)} `)}`;

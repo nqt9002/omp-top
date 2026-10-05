@@ -7,9 +7,9 @@ import { TerminalUI, Keys } from "./tui.mjs";
 import { fetchStats } from "./omp.mjs";
 import { normalizeStats } from "./stats.mjs";
 import { loadHistoricalQuota, mergeProviderReports, ProgressiveQuotaRefresh } from "./quota.mjs";
-import { style, providerLabel, formatCountdown } from "./format.mjs";
+import { style, providerLabel, formatCountdown, truncateAnsi } from "./format.mjs";
 import {
-  composeSides, frameBottom, frameDivider, frameRow, frameTop, offsetLine, workspaceGeometry, wrapLines,
+  composeSides, fitSegments, frameBottom, frameDivider, frameRow, frameTop, offsetLine, workspaceGeometry, wrapLines,
 } from "./layout.mjs";
 import { VIEWS, directViewIndex, nextViewIndex, renderWorkspace, renderViewTabs, viewLabel } from "./views.mjs";
 import { t } from "./i18n.mjs";
@@ -31,6 +31,8 @@ export class OmpTopApp {
   #scroll = 0;
   #scrollByView = new Map();
   #bodyHeight = 1;
+  #viewportWidth = 100;
+  #viewportHeight = 24;
   #inspecting = false;
   #inspectionByView = new Map();
   #entries = [];
@@ -80,7 +82,7 @@ export class OmpTopApp {
       setInterval: deps.setInterval ?? setInterval,
       clearInterval: deps.clearInterval ?? clearInterval,
     };
-    this.#ui = ui ?? new TerminalUI({ render: (w, h) => this.render(w, h), input: data => this.handleInput(data) });
+    this.#ui = ui ?? new TerminalUI({ render: (w, h) => this.render(w, h), input: data => this.handleInput(data), paste: text => this.handlePaste(text) });
   }
 
   async run() {
@@ -323,6 +325,49 @@ export class OmpTopApp {
     this.#ui.draw();
   }
 
+  #viewContext() {
+    const statsState = {
+      refreshing: this.#statsRefreshing,
+      startedAt: this.#statsRefreshStartedAt,
+      updatedAt: this.#snapshot.statsUpdatedAt,
+      error: this.#statsError,
+    };
+    const local = this.#requestWindow?.available && this.#requestWindow.hours === this.#windowHours ? this.#requestWindow : undefined;
+    return {
+      stats: local ? { ...local.stats, windowHours: this.#windowHours } : this.#windowHours === 24 ? this.#snapshot.stats : undefined,
+      ompStats: local ? this.#snapshot.stats : undefined,
+      statsState: local ? { refreshing: this.#windowLoading, updatedAt: local.untilMs }
+        : this.#windowHours !== 24 ? { refreshing: this.#windowLoading, error: this.#requestWindow?.reason } : statsState,
+      quota: this.#snapshot.quota,
+      cacheDiagnostics: local?.diagnostics ?? (this.#windowHours === 24 ? this.#snapshot.cacheDiagnostics : undefined),
+      providerStates: this.#states,
+      quotaRefreshing: this.#quotaRefreshing,
+      quotaNextAt: this.#quotaNextAt,
+      now: this.#deps.now(),
+      events: this.#events,
+    };
+  }
+
+  // Input must see current rows even when the next terminal paint is deferred.
+  #syncInspection(context = this.#viewContext()) {
+    const state = this.#inspectionState();
+    const explored = exploreEntries(VIEWS[this.#viewIndex].id, context, state);
+    this.#entries = explored.entries;
+    this.#providers = explored.providers;
+    state.emptyMessage = explored.reason;
+    if (this.#inspecting && !this.#entries.some(row => row.id === state.selected)) {
+      state.selected = this.#entries[0]?.id;
+      state.detailOffset = 0;
+    }
+  }
+
+  handlePaste(text) {
+    // Pasted text is data only; dashboard shortcuts must never run from paste.
+    if (this.#searchDraft === undefined) return;
+    this.#searchDraft = (this.#searchDraft + String(text).replace(/[\x00-\x1f\x7f-\x9f]/gu, " ")).slice(0, 512);
+    this.#ui.draw();
+  }
+
   handleInput(data) {
     if (this.#searchDraft !== undefined) {
       if (data === Keys.escape) this.#searchDraft = undefined;
@@ -335,6 +380,10 @@ export class OmpTopApp {
       else if (data === Keys.ctrlC || data === Keys.ctrlD) this.#done.resolve();
       this.#ui.draw(); return;
     }
+    this.#prepareViewport(
+      this.#ui.columns ?? this.#viewportWidth,
+      this.#ui.columns !== undefined ? (this.#ui.rows ?? this.#viewportHeight) : this.#viewportHeight,
+    );
     if (data === "w") {
       this.#windowHours = [1, 6, 24][([1, 6, 24].indexOf(this.#windowHours) + 1) % 3];
       this.#requestWindow = undefined;
@@ -409,7 +458,42 @@ export class OmpTopApp {
     return t("top.nextCountdown", { next: formatCountdown(nextAt, this.#deps.now()) });
   }
 
+  // Normalize row selection and viewport bounds independently of terminal paint.
+  // This keeps boundary/reversal bursts (End, Up or repeated PgDn, PgUp) ordered.
+  #prepareViewport(width, height) {
+    const workspace = workspaceGeometry(width);
+    const view = VIEWS[this.#viewIndex] ?? VIEWS[0];
+    const context = this.#viewContext();
+
+    const compactChrome = height < 16;
+    const bodyHeight = Math.max(0, height - (compactChrome ? 5 : 8));
+    this.#bodyHeight = Math.max(1, bodyHeight);
+    const state = this.#inspectionState();
+    this.#syncInspection(context);
+    const windowState = { hours: this.#windowHours, result: this.#requestWindow, loading: this.#windowLoading };
+    const body = this.#comparisonOpen ? renderComparison(windowState, workspace.innerWidth) : this.#inspecting
+      ? renderInspection(this.#entries, state, workspace.innerWidth, bodyHeight)
+      : renderWorkspace(view.id, context, workspace.innerWidth, height);
+    if (!this.#comparisonOpen && !this.#inspecting) {
+      // Small terminals: one clipped context line, no spacer — body rows are scarce.
+      const summary = windowSummary(windowState);
+      if (compactChrome || workspace.innerWidth < 72) body.unshift(style.dim(truncateAnsi(summary, workspace.innerWidth)));
+      else body.unshift(...wrapLines([summary], workspace.innerWidth), "");
+    }
+    const maxOffset = Math.max(0, body.length - bodyHeight);
+    const savedScroll = this.#scroll;
+    if (this.#scroll === Number.MAX_SAFE_INTEGER) this.#scroll = maxOffset;
+    this.#scroll = Math.max(0, Math.min(this.#scroll, maxOffset));
+    const visible = body.slice(this.#scroll, this.#scroll + bodyHeight);
+    if (this.#inspecting && !this.#comparisonOpen) this.#scroll = savedScroll;
+    while (visible.length < bodyHeight) visible.push("");
+
+    return { view, state, compactChrome, maxOffset, visible };
+  }
+
   render(width, height) {
+    this.#viewportWidth = width;
+    this.#viewportHeight = height;
     const workspace = workspaceGeometry(width);
     const identity = [style.bold("OMP TOP")];
     if (this.#version) identity.push(`v${this.#version}`);
@@ -424,48 +508,7 @@ export class OmpTopApp {
     const tabs = renderViewTabs(this.#viewIndex, workspace.innerWidth);
     const navLine = tabs;
 
-    const statsState = {
-      refreshing: this.#statsRefreshing,
-      startedAt: this.#statsRefreshStartedAt,
-      updatedAt: this.#snapshot.statsUpdatedAt,
-      error: this.#statsError,
-    };
-    const view = VIEWS[this.#viewIndex] ?? VIEWS[0];
-    const local = this.#requestWindow?.available && this.#requestWindow.hours === this.#windowHours ? this.#requestWindow : undefined;
-    const context = {
-      stats: local ? { ...local.stats, windowHours: this.#windowHours } : this.#windowHours === 24 ? this.#snapshot.stats : undefined,
-      ompStats: local ? this.#snapshot.stats : undefined,
-      statsState: local ? { refreshing: this.#windowLoading, updatedAt: local.untilMs }
-        : this.#windowHours !== 24 ? { refreshing: this.#windowLoading, error: this.#requestWindow?.reason } : statsState,
-      quota: this.#snapshot.quota,
-      cacheDiagnostics: local?.diagnostics ?? (this.#windowHours === 24 ? this.#snapshot.cacheDiagnostics : undefined),
-      providerStates: this.#states,
-      quotaRefreshing: this.#quotaRefreshing,
-      quotaNextAt: this.#quotaNextAt,
-      now: this.#deps.now(),
-      events: this.#events,
-    };
-
-    const compactChrome = height < 16;
-    const bodyHeight = Math.max(0, height - (compactChrome ? 5 : 8));
-    this.#bodyHeight = Math.max(1, bodyHeight);
-    const state = this.#inspectionState();
-    const explored = exploreEntries(view.id, context, state);
-    this.#entries = explored.entries;
-    this.#providers = explored.providers;
-    state.emptyMessage = explored.reason;
-    const windowState = { hours: this.#windowHours, result: this.#requestWindow, loading: this.#windowLoading };
-    const body = this.#comparisonOpen ? renderComparison(windowState, workspace.innerWidth) : this.#inspecting
-      ? renderInspection(this.#entries, state, workspace.innerWidth, bodyHeight)
-      : renderWorkspace(view.id, context, workspace.innerWidth, height);
-    if (!this.#comparisonOpen && !this.#inspecting) body.unshift(...wrapLines([windowSummary(windowState)], workspace.innerWidth), "");
-    const maxOffset = Math.max(0, body.length - bodyHeight);
-    const savedScroll = this.#scroll;
-    if (this.#scroll === Number.MAX_SAFE_INTEGER) this.#scroll = maxOffset;
-    this.#scroll = Math.max(0, Math.min(this.#scroll, maxOffset));
-    const visible = body.slice(this.#scroll, this.#scroll + bodyHeight);
-    if (this.#inspecting && !this.#comparisonOpen) this.#scroll = savedScroll;
-    while (visible.length < bodyHeight) visible.push("");
+    const { view, state, compactChrome, maxOffset, visible } = this.#prepareViewport(width, height);
 
     const activeStatus = this.#deps.now() - this.#statusAt < STATUS_TTL_MS && this.#status
       ? this.#status
@@ -485,7 +528,7 @@ export class OmpTopApp {
       ...visible.map(line => frameRow(line, workspace.width)),
       ...(!compactChrome ? [frameDivider(workspace.width)] : []),
       frameRow(statusLine, workspace.width),
-      frameRow(style.dim(hints), workspace.width),
+      frameRow(style.dim(fitSegments(hints, workspace.innerWidth, " · ", this.#searchDraft !== undefined ? 1 : -1)), workspace.width),
       frameBottom(workspace.width),
     ];
     return framed.map(line => offsetLine(line, workspace.offset));
