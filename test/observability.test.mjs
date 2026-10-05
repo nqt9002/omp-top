@@ -215,7 +215,7 @@ test("responsive shell uses wide workspaces without overflowing", () => {
   }
   const wide = app.render(220, 32);
   assert.ok(stripAnsi(wide[0]).startsWith("╭"));
-  assert.match(stripAnsi(wide[1]), /▌ Overview/);
+  assert.match(stripAnsi(wide[1]), /▌ 1 Overview/);
   assert.match(stripAnsi(wide.at(-2)), /Enter inspect/);
   app.dispose();
 });

@@ -1,4 +1,4 @@
-import { padRight, style, truncateAnsi, visibleWidth, safeTerminalText } from "./format.mjs";
+import { padRight, style, stripAnsi, truncateAnsi, visibleWidth, safeTerminalText } from "./format.mjs";
 
 export const WORKSPACE_MIN_WIDTH = 40;
 
@@ -115,7 +115,7 @@ export function wrapAnsi(text, width) {
   let line = "";
   let used = 0;
   let active = "";
-  const indent = Math.min(text.match(/^ */u)?.[0].length ?? 0, 4, available - 1);
+  const indent = Math.min(stripAnsi(text).match(/^ */u)?.[0].length ?? 0, 4, available - 1);
   const flush = () => {
     lines.push(line + (active ? "\x1b[0m" : ""));
     line = active + " ".repeat(indent);
@@ -148,4 +148,20 @@ export function joinPanels(main, detail, mainWidth, detailWidth) {
   const right = wrapLines(detail, detailWidth);
   return Array.from({ length: Math.max(left.length, right.length) }, (_, index) =>
     `${padRight(left[index] ?? "", mainWidth)} ${style.dim("│")} ${right[index] ?? ""}`);
+}
+
+// Fit a " · "-separated hint bar by dropping whole items (never cutting one mid-word);
+// Pin the requested item (default: final quit/help); search pins cancel instead.
+export function fitSegments(text, width, separator = " · ", pinnedIndex = -1) {
+  const value = String(text ?? "");
+  if (visibleWidth(value) <= width) return value;
+  const items = value.split(separator);
+  const index = pinnedIndex < 0 ? items.length + pinnedIndex : pinnedIndex;
+  const [last] = items.splice(Math.max(0, Math.min(index, items.length - 1)), 1);
+  const kept = [];
+  for (const item of items) {
+    if (visibleWidth([...kept, item, last].join(separator)) > width) break;
+    kept.push(item);
+  }
+  return truncateAnsi([...kept, last].join(separator), width);
 }

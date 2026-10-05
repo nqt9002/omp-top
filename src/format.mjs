@@ -21,24 +21,58 @@ export function safeTerminalText(text) {
       : part.replace(/[\r\n]/gu, " ↵ ").replace(/[\x00-\x1f\x7f-\x9f]/gu, " ")).join("");
 }
 export function stripAnsi(text) { return text.replace(ANSI_RE, ""); }
+
+const GRAPHEMES = new Intl.Segmenter(undefined, { granularity: "grapheme" });
+// Printable ASCII without escapes: width === length (the overwhelmingly common case).
+const PLAIN_ASCII_RE = /^[\x20-\x7e]*$/u;
+const SGR_TOKEN_RE = /(\x1b\[[0-9;]*m)/u;
+const SGR_ONLY_RE = /^\x1b\[[0-9;]*m$/u;
+const SGR_RESET_RE = /^\x1b\[0?m$/u;
+
+// Frames repeat almost verbatim every tick; memoize widths of non-ASCII strings.
+const WIDTH_CACHE = new Map();
+const WIDTH_CACHE_LIMIT = 4096;
+
 export function visibleWidth(text) {
-  const plain = stripAnsi(text);
-  if (globalThis.Bun?.stringWidth) return Bun.stringWidth(plain);
-  return [...plain].length;
+  const value = String(text);
+  if (PLAIN_ASCII_RE.test(value)) return value.length;
+  const cached = WIDTH_CACHE.get(value);
+  if (cached !== undefined) return cached;
+  const plain = stripAnsi(value);
+  const width = PLAIN_ASCII_RE.test(plain) ? plain.length
+    : globalThis.Bun?.stringWidth ? Bun.stringWidth(plain) : [...plain].length;
+  if (WIDTH_CACHE.size >= WIDTH_CACHE_LIMIT) WIDTH_CACHE.clear();
+  WIDTH_CACHE.set(value, width);
+  return width;
 }
+
+// Clip to `width` columns while keeping renderer SGR styling; non-SGR controls are dropped.
 export function truncateAnsi(text, width) {
   if (width <= 0) return "";
-  if (visibleWidth(text) <= width) return text;
-  const plain = stripAnsi(text);
+  const value = String(text);
+  if (visibleWidth(value) <= width) return value;
+  const budget = width - 1;
   let clipped = "";
   let used = 0;
-  for (const { segment } of new Intl.Segmenter(undefined, { granularity: "grapheme" }).segment(plain)) {
-    const size = visibleWidth(segment);
-    if (used + size > width - 1) break;
-    clipped += segment;
-    used += size;
+  let styled = false;
+  outer: for (const part of value.replace(ANSI_RE, seq => SGR_ONLY_RE.test(seq) ? seq : "").split(SGR_TOKEN_RE)) {
+    if (!part) continue;
+    if (SGR_ONLY_RE.test(part)) { clipped += part; styled = !SGR_RESET_RE.test(part); continue; }
+    if (PLAIN_ASCII_RE.test(part)) {
+      const take = Math.min(part.length, budget - used);
+      clipped += part.slice(0, take);
+      used += take;
+      if (take < part.length) break;
+      continue;
+    }
+    for (const { segment } of GRAPHEMES.segment(part)) {
+      const size = visibleWidth(segment);
+      if (used + size > budget) break outer;
+      clipped += segment;
+      used += size;
+    }
   }
-  return clipped + "…";
+  return `${clipped}…${styled ? "\x1b[0m" : ""}`;
 }
 export function padRight(text, width) {
   const w = visibleWidth(text);
@@ -57,9 +91,16 @@ export function percent(fraction) {
   const value = fraction * 100;
   return `${value >= 10 ? value.toFixed(0) : value.toFixed(1)}%`;
 }
+const CLOCK_FORMATTERS = new Map();
 export function formatClock(timestamp) {
   if (!timestamp) return "-";
-  return new Date(timestamp).toLocaleTimeString(getIntlLocale(), { hour: "2-digit", minute: "2-digit", second: "2-digit" });
+  const locale = getIntlLocale();
+  let formatter = CLOCK_FORMATTERS.get(locale);
+  if (!formatter) {
+    formatter = new Intl.DateTimeFormat(locale, { hour: "2-digit", minute: "2-digit", second: "2-digit" });
+    CLOCK_FORMATTERS.set(locale, formatter);
+  }
+  return formatter.format(new Date(timestamp));
 }
 export function formatAge(timestamp, now = Date.now()) {
   if (!timestamp) return t("time.unknown");

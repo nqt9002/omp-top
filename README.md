@@ -123,6 +123,10 @@ The workspace follows the terminal width instead of centering a fixed 160-column
 - Press `Enter` to inspect rows: arrows select a row, PgUp/PgDn scroll its full detail, and Escape returns to the dashboard. Selection persists across view switches and resize.
 - Switching views restores each view's scroll position. Page scrolling follows the current viewport height.
 
+The renderer coalesces redraw requests and writes only changed terminal rows; unchanged frames produce no terminal output. Resize triggers a full repaint. Synchronized output is used where the terminal supports it, and cursor/wrap/paste modes are restored on exit.
+
+Arrow keys and navigation sequences are decoded across input chunks, including held-key bursts. Bracketed paste is accepted as text only while editing a search; it never runs dashboard shortcuts. A standalone Escape is recognized after a short disambiguation delay so a fragmented arrow sequence is not mistaken for Exit.
+
 ### Search and drill-down
 
 Press `Enter` to inspect the current view. Full model/account/project/session identifiers remain available in the detail area even when the row list shortens them. Enter on an Overview alert selects its provider/model or exact quota account/bucket. Models and Cache model rows lead to projects, and project rows lead to sessions. `b` restores the previous selection and query.
