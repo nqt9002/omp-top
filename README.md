@@ -29,10 +29,10 @@ A small terminal monitor for **Oh My Pi (OMP)** request/cache statistics and pro
 
 ## Install
 
-Clone the GitHub repository once:
+Clone the stable release once:
 
 ```bash
-git clone https://github.com/nqt9002/omp-top.git
+git clone --branch v0.6.0 --depth 1 https://github.com/nqt9002/omp-top.git
 cd omp-top
 ./install.sh
 ```
@@ -223,7 +223,7 @@ No npm registry, npx, or bunx is involved.
 Install one exact release:
 
 ```bash
-omp-top upgrade --tag v0.5.1
+omp-top upgrade --tag v0.6.0
 ```
 
 Install the newest published beta:
@@ -452,6 +452,7 @@ Run validation and tests:
 ```bash
 bun run check
 bun test/run.mjs
+node --test test/*.test.mjs
 ```
 
 ### Contribution workflow
@@ -472,7 +473,7 @@ CI gate
 merge
 ```
 
-Bug fixes and features should link their PR with `Fixes #<issue>`.
+Bug fixes and features target `develop` from a dedicated branch and reference their tracking issue with `Refs #<issue>`. Release, hotfix, and documentation PRs may target `main`; use `Fixes #<issue>` when that merge completes the tracked work. PR titles use Conventional Commit prefixes.
 
 ### Releases
 
@@ -511,11 +512,15 @@ Each release reruns runtime validation and tests, packages only tracked release 
 
 `workflow_dispatch` remains available as a recovery/admin path; normal beta and stable publishing is driven by accepted merges to their channel branches.
 
-Docs-only changes do not need a release-line change.
+Docs-only changes do not need a release-line change. Normal publication is path-filtered; a documentation-only merge does not trigger a release.
 
-## Current development line
+For stable promotion, branch from the exact tested beta, set `package.json.releaseChannel` to `stable`, and retain the beta's runtime and ancestry. Review and pass PR CI before merging the release PR to `main`. The checked workflow verifies the same runtime against the published beta and refuses reused tags; no manual tag push is needed.
 
-**0.6.0 · beta**
+## Current release
+
+**0.6.0 · stable**
+
+Promoted from the maintainer-tested [v0.6.0-beta.16](https://github.com/nqt9002/omp-top/releases/tag/v0.6.0-beta.16). See [release notes](CHANGELOG.md) for the stable highlights and validation.
 
 ## License
 

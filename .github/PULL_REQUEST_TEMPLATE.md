@@ -12,7 +12,7 @@ Refs #
 - [ ] Relevant README/help updated; no private data or credentials in fixtures.
 
 ## Release / backport
-- [ ] This merge does not publish a release automatically.
-- [ ] Stable promotion links tested beta/evidence; a stable hotfix has a develop backport plan.
+- [ ] I checked whether this merge triggers publication: accepted release-path changes to develop/main trigger the checked beta/stable workflow; docs-only changes do not.
+- [ ] Stable promotion links tested beta/evidence, preserves runtime and ancestry, and sets the stable source channel; a stable hotfix has a develop backport plan.
 
 Tested beta / hotfix backport plan (when applicable):
