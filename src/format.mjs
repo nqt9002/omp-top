@@ -1,3 +1,5 @@
+import { getIntlLocale, t } from "./i18n.mjs";
+
 const ANSI_RE = /\x1B(?:\[[0-?]*[ -/]*[@-~]|\][^\x07]*(?:\x07|\x1B\\))/g;
 
 export const colorEnabled = process.env.NO_COLOR === undefined;
@@ -9,21 +11,68 @@ export const style = {
   green: text => ansi("32", text),
   yellow: text => ansi("33", text),
   cyan: text => ansi("36", text),
+  inverse: text => ansi("7", text),
 };
 
-export function stripAnsi(text) { return text.replace(ANSI_RE, ""); }
-export function visibleWidth(text) {
-  const plain = stripAnsi(text);
-  if (globalThis.Bun?.stringWidth) return Bun.stringWidth(plain);
-  return [...plain].length;
+// Data can contain newlines or terminal controls; only renderer SGR styling is retained.
+export function safeTerminalText(text) {
+  return String(text).replace(ANSI_RE, sequence => /^\x1b\[[0-9;]*m$/u.test(sequence) ? sequence : "")
+    .split(/(\x1b\[[0-9;]*m)/u).map(part => /^\x1b\[[0-9;]*m$/u.test(part) ? part
+      : part.replace(/[\r\n]/gu, " ↵ ").replace(/[\x00-\x1f\x7f-\x9f]/gu, " ")).join("");
 }
+export function stripAnsi(text) { return text.replace(ANSI_RE, ""); }
+
+const GRAPHEMES = new Intl.Segmenter(undefined, { granularity: "grapheme" });
+// Printable ASCII without escapes: width === length (the overwhelmingly common case).
+const PLAIN_ASCII_RE = /^[\x20-\x7e]*$/u;
+const SGR_TOKEN_RE = /(\x1b\[[0-9;]*m)/u;
+const SGR_ONLY_RE = /^\x1b\[[0-9;]*m$/u;
+const SGR_RESET_RE = /^\x1b\[0?m$/u;
+
+// Frames repeat almost verbatim every tick; memoize widths of non-ASCII strings.
+const WIDTH_CACHE = new Map();
+const WIDTH_CACHE_LIMIT = 4096;
+
+export function visibleWidth(text) {
+  const value = String(text);
+  if (PLAIN_ASCII_RE.test(value)) return value.length;
+  const cached = WIDTH_CACHE.get(value);
+  if (cached !== undefined) return cached;
+  const plain = stripAnsi(value);
+  const width = PLAIN_ASCII_RE.test(plain) ? plain.length
+    : globalThis.Bun?.stringWidth ? Bun.stringWidth(plain) : [...plain].length;
+  if (WIDTH_CACHE.size >= WIDTH_CACHE_LIMIT) WIDTH_CACHE.clear();
+  WIDTH_CACHE.set(value, width);
+  return width;
+}
+
+// Clip to `width` columns while keeping renderer SGR styling; non-SGR controls are dropped.
 export function truncateAnsi(text, width) {
   if (width <= 0) return "";
-  if (visibleWidth(text) <= width) return text;
-  const plain = stripAnsi(text);
-  const chars = [...plain];
-  if (chars.length <= width) return plain;
-  return chars.slice(0, Math.max(0, width - 1)).join("") + "…";
+  const value = String(text);
+  if (visibleWidth(value) <= width) return value;
+  const budget = width - 1;
+  let clipped = "";
+  let used = 0;
+  let styled = false;
+  outer: for (const part of value.replace(ANSI_RE, seq => SGR_ONLY_RE.test(seq) ? seq : "").split(SGR_TOKEN_RE)) {
+    if (!part) continue;
+    if (SGR_ONLY_RE.test(part)) { clipped += part; styled = !SGR_RESET_RE.test(part); continue; }
+    if (PLAIN_ASCII_RE.test(part)) {
+      const take = Math.min(part.length, budget - used);
+      clipped += part.slice(0, take);
+      used += take;
+      if (take < part.length) break;
+      continue;
+    }
+    for (const { segment } of GRAPHEMES.segment(part)) {
+      const size = visibleWidth(segment);
+      if (used + size > budget) break outer;
+      clipped += segment;
+      used += size;
+    }
+  }
+  return `${clipped}…${styled ? "\x1b[0m" : ""}`;
 }
 export function padRight(text, width) {
   const w = visibleWidth(text);
@@ -35,36 +84,124 @@ export function compactNumber(value) {
   if (abs >= 1e9) return `${(value / 1e9).toFixed(abs >= 10e9 ? 1 : 2)}B`;
   if (abs >= 1e6) return `${(value / 1e6).toFixed(abs >= 10e6 ? 1 : 2)}M`;
   if (abs >= 1e3) return `${(value / 1e3).toFixed(abs >= 10e3 ? 1 : 2)}K`;
-  return Math.round(value).toLocaleString("en-US");
+  return Math.round(value).toLocaleString(getIntlLocale());
 }
 export function percent(fraction) {
   if (!Number.isFinite(fraction)) return "-";
   const value = fraction * 100;
   return `${value >= 10 ? value.toFixed(0) : value.toFixed(1)}%`;
 }
+const CLOCK_FORMATTERS = new Map();
 export function formatClock(timestamp) {
   if (!timestamp) return "-";
-  return new Date(timestamp).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" });
+  const locale = getIntlLocale();
+  let formatter = CLOCK_FORMATTERS.get(locale);
+  if (!formatter) {
+    formatter = new Intl.DateTimeFormat(locale, { hour: "2-digit", minute: "2-digit", second: "2-digit" });
+    CLOCK_FORMATTERS.set(locale, formatter);
+  }
+  return formatter.format(new Date(timestamp));
 }
 export function formatAge(timestamp, now = Date.now()) {
-  if (!timestamp) return "unknown";
+  if (!timestamp) return t("time.unknown");
   const sec = Math.max(0, Math.round((now - timestamp) / 1000));
-  if (sec < 60) return `${sec}s`;
+  if (sec < 60) return t("time.seconds", { value: sec });
   const min = Math.floor(sec / 60);
-  if (min < 60) return `${min}m`;
+  if (min < 60) return t("time.minutes", { value: min });
   const hours = Math.floor(min / 60);
-  if (hours < 24) return `${hours}h`;
-  return `${Math.floor(hours / 24)}d`;
+  if (hours < 24) return t("time.hoursMinutes", { hours, minutes: "" });
+  return t("time.daysHours", { days: Math.floor(hours / 24), hours: "" });
 }
+export function formatUntil(timestamp, now = Date.now()) {
+  if (!Number.isFinite(timestamp)) return "-";
+  const delta = Number(timestamp) - now;
+  if (delta <= 0) return t("time.now");
+  const sec = Math.ceil(delta / 1000);
+  if (sec < 60) return t("time.seconds", { value: sec });
+  const min = Math.ceil(sec / 60);
+  if (min < 60) return t("time.minutes", { value: min });
+  const hours = Math.floor(min / 60);
+  const remMin = min % 60;
+  if (hours < 24) {
+    return t("time.hoursMinutes", { hours, minutes: remMin ? ` ${t("time.minutes", { value: remMin })}` : "" });
+  }
+  const days = Math.floor(hours / 24);
+  const remHours = hours % 24;
+  return t("time.daysHours", { days, hours: remHours ? ` ${t("time.hoursMinutes", { hours: remHours, minutes: "" })}` : "" });
+}
+
+export function formatCountdown(timestamp, now = Date.now()) {
+  if (!Number.isFinite(Number(timestamp))) return "-";
+  const deltaMs = Number(timestamp) - Number(now);
+  if (deltaMs <= 0) return t("time.due");
+
+  const totalSeconds = Math.max(1, Math.ceil(deltaMs / 1000));
+  if (totalSeconds < 60) return t("time.seconds", { value: totalSeconds });
+
+  const totalMinutes = Math.floor(totalSeconds / 60);
+  const seconds = totalSeconds % 60;
+  if (totalMinutes < 60) {
+    return `${t("time.minutes", { value: totalMinutes })}${seconds ? ` ${t("time.seconds", { value: seconds })}` : ""}`;
+  }
+
+  const hours = Math.floor(totalMinutes / 60);
+  const minutes = totalMinutes % 60;
+  if (hours < 24) {
+    return t("time.hoursMinutes", {
+      hours,
+      minutes: minutes ? ` ${t("time.minutes", { value: minutes })}` : "",
+    });
+  }
+
+  const days = Math.floor(hours / 24);
+  const remHours = hours % 24;
+  return t("time.daysHours", {
+    days,
+    hours: remHours ? ` ${t("time.hoursMinutes", { hours: remHours, minutes: "" })}` : "",
+  });
+}
+
 export function formatReset(resetsAt, now = Date.now()) {
-  if (!Number.isFinite(resetsAt)) return "";
-  let min = Math.ceil((resetsAt - now) / 60000);
-  if (min <= 0) return "reset now";
-  if (min < 60) return `reset ${min}m`;
-  const h = Math.floor(min / 60); min %= 60;
-  if (h < 24) return `reset ${h}h${min ? ` ${min}m` : ""}`;
-  const d = Math.floor(h / 24); const rh = h % 24;
-  return `reset ${d}d${rh ? ` ${rh}h` : ""}`;
+  if (!Number.isFinite(Number(resetsAt))) return "";
+  if (Number(resetsAt) <= Number(now)) return t("time.resetDue");
+  return t("time.resetCountdown", { time: formatCountdown(resetsAt, now) });
+}
+export function formatDuration(ms) {
+  if (!Number.isFinite(ms)) return "-";
+  if (ms < 1000) return `${Math.round(ms)}ms`;
+  if (ms < 60000) return `${(ms / 1000).toFixed(ms < 10000 ? 1 : 0)}s`;
+  return `${(ms / 60000).toFixed(1)}m`;
+}
+export function formatMoney(value) {
+  if (!Number.isFinite(value)) return "-";
+  if (Math.abs(value) < 0.01) return `$${value.toFixed(4)}`;
+  if (Math.abs(value) < 10) return `$${value.toFixed(2)}`;
+  return `$${value.toFixed(1)}`;
+}
+export function formatHours(hours) {
+  if (!Number.isFinite(hours)) return "-";
+  const totalMinutes = Math.max(1, Math.round(hours * 60));
+  if (totalMinutes < 60) return t("time.minutes", { value: totalMinutes });
+  const wholeHours = Math.floor(totalMinutes / 60);
+  const minutes = totalMinutes % 60;
+  if (wholeHours < 24) {
+    return t("time.hoursMinutes", { hours: wholeHours, minutes: minutes ? ` ${t("time.minutes", { value: minutes })}` : "" });
+  }
+  const days = Math.floor(wholeHours / 24);
+  const remHours = wholeHours % 24;
+  return t("time.daysHours", { days, hours: remHours ? ` ${t("time.hoursMinutes", { hours: remHours, minutes: "" })}` : "" });
+}
+export function formatPercentPerHour(fraction) {
+  if (!Number.isFinite(fraction)) return "-";
+  return `${(fraction * 100).toFixed(fraction * 100 < 10 ? 1 : 0)}%/h`;
+}
+export function sparkline(values, maxPoints = 28) {
+  const chars = "▁▂▃▄▅▆▇█";
+  const nums = (values ?? []).map(Number).filter(Number.isFinite).slice(-maxPoints);
+  if (!nums.length) return "-";
+  const min = Math.min(...nums); const max = Math.max(...nums);
+  if (max === min) return chars[0].repeat(nums.length);
+  return nums.map(value => chars[Math.max(0, Math.min(chars.length - 1, Math.round(((value - min) / (max - min)) * (chars.length - 1))))]).join("");
 }
 export function providerLabel(provider) {
   const known = {

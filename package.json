@@ -1,6 +1,7 @@
 {
   "name": "omp-top",
-  "version": "0.5.4",
+  "version": "0.6.0",
+  "releaseChannel": "stable",
   "description": "Zero-dependency terminal monitor for Oh My Pi (OMP) stats, cache efficiency, and provider quota.",
   "type": "module",
   "files": [
@@ -12,20 +13,12 @@
     "start": "bun src/main.mjs",
     "test": "bun test/run.mjs",
     "test:node": "node test/run.mjs",
-    "check": "bun build src/main.mjs src/top.mjs src/quota.mjs src/omp.mjs src/tui.mjs src/self.mjs src/stats.mjs src/json.mjs src/format.mjs --target=bun --outdir=/tmp/omp-top-build"
+    "check": "bun build src/*.mjs --target=bun --outdir=/tmp/omp-top-build"
   },
   "engines": {
     "bun": ">=1.3.14"
   },
-  "keywords": [
-    "omp",
-    "oh-my-pi",
-    "terminal",
-    "tui",
-    "cache",
-    "quota",
-    "monitoring"
-  ],
+  "keywords": ["omp", "oh-my-pi", "terminal", "tui", "cache", "quota", "monitoring"],
   "repository": {
     "type": "git",
     "url": "git+https://github.com/nqt9002/omp-top.git"

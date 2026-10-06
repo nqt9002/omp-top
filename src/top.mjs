@@ -1,192 +1,98 @@
+import { loadRequestWindow } from './request-windows.mjs';
+import { QuotaAlertPolicy } from './quota-alerts.mjs';
+import { renderComparison, windowSummary } from './window-view.mjs';
+import { exploreEntries, SORT_ORDERS } from './exploration.mjs';
+import { renderInspection } from './inspection.mjs';
 import { TerminalUI, Keys } from "./tui.mjs";
 import { fetchStats } from "./omp.mjs";
-import { normalizeStats, aggregateCacheByProvider, sortModels } from "./stats.mjs";
-import { loadHistoricalQuota, mergeProviderReports, ProgressiveQuotaRefresh, quotaDisplayGroups } from "./quota.mjs";
+import { normalizeStats } from "./stats.mjs";
+import { loadHistoricalQuota, mergeProviderReports, ProgressiveQuotaRefresh } from "./quota.mjs";
+import { style, providerLabel, formatCountdown, truncateAnsi } from "./format.mjs";
 import {
-  style, compactNumber, percent, providerLabel, usedFraction, quotaColor, cacheColor,
-  progressBar, formatReset, formatClock, formatAge, visibleWidth, truncateAnsi,
-} from "./format.mjs";
+  composeSides, fitSegments, frameBottom, frameDivider, frameRow, frameTop, offsetLine, workspaceGeometry, wrapLines,
+} from "./layout.mjs";
+import { VIEWS, directViewIndex, nextViewIndex, renderWorkspace, renderViewTabs, viewLabel } from "./views.mjs";
+import { t } from "./i18n.mjs";
+import { loadCacheDiagnostics } from "./cache-diagnostics.mjs";
+import {
+  COUNTDOWN_REDRAW_MS, QUOTA_AUTO_REFRESH_MS, STATS_AUTO_REFRESH_MS, nextRefreshAt,
+} from "./refresh-policy.mjs";
 
 const STATUS_TTL_MS = 8000;
-const DASHBOARD_MAX_WIDTH = 112;
-
-function accountLabel(report, fallback) {
-  const metadata = report?.metadata ?? {};
-  for (const key of ["email", "accountId", "projectId", "orgName", "orgId"]) {
-    const value = metadata[key];
-    if (typeof value === "string" && value.trim()) return value.trim();
-  }
-  return fallback;
-}
-function planLabel(report) {
-  const metadata = report?.metadata ?? {};
-  for (const key of ["planType", "plan", "tier"]) {
-    const value = metadata[key];
-    if (typeof value === "string" && value.trim()) return value.trim();
-  }
-  return "";
-}
-
-function sectionTitle(label, width, status = "") {
-  const statusWidth = visibleWidth(status);
-  const available = Math.max(6, width - label.length - statusWidth - (status ? 4 : 2));
-  const ruleWidth = Math.max(6, Math.min(34, available));
-  return `${style.bold(label)} ${style.dim("─".repeat(ruleWidth))}${status ? `  ${status}` : ""}`;
-}
-
-function statsStateText({ stats, refreshing, startedAt, updatedAt, error, now = Date.now() }) {
-  const elapsed = startedAt ? formatAge(startedAt, now) : "0s";
-  if (refreshing && !stats) return style.yellow(`↻ calculating · ${elapsed}`);
-  if (refreshing && stats) return style.yellow(`↻ refreshing · ${elapsed} · showing previous`);
-  if (error && stats) return style.red("⚠ refresh failed · showing previous");
-  if (error) return style.red("⚠ unavailable");
-  if (stats && updatedAt) return style.green(`✓ updated ${formatClock(updatedAt)}`);
-  return style.dim("not loaded");
-}
-
-function renderStats(stats, width = 100, state = {}) {
-  const status = statsStateText({ stats, ...state });
-  const lines = [sectionTitle("REQUEST / CACHE", width, status)];
-  if (!stats) {
-    if (state.refreshing) {
-      lines.push(style.dim("  Syncing OMP session history and calculating cache. First load may take a while."));
-    } else if (state.error) {
-      lines.push(style.red(`  ${String(state.error).slice(0, Math.max(20, width - 4))}`));
-    } else {
-      lines.push(style.dim("  Stats have not been loaded yet."));
-    }
-    return lines;
-  }
-  if (state.refreshing) lines.push(style.dim("  Showing the previous snapshot while the refresh runs."));
-  else if (state.error) lines.push(style.dim("  Previous snapshot preserved; the latest refresh failed."));
-  const o = stats.overall ?? {};
-  lines.push(
-    `  Requests      ${compactNumber(Number(o.totalRequests || 0)).padEnd(10)}  Cache rate      ${percent(Number(o.cacheRate || 0))}`,
-    `  Input         ${compactNumber(Number(o.totalInputTokens || 0)).padEnd(10)}  Cache read      ${compactNumber(Number(o.totalCacheReadTokens || 0))}`,
-    `  Output        ${compactNumber(Number(o.totalOutputTokens || 0)).padEnd(10)}  Cache write     ${compactNumber(Number(o.totalCacheWriteTokens || 0))}`,
-    `  Errors        ${compactNumber(Number(o.failedRequests || 0)).padEnd(10)}  Cache savings   ${percent(Number(o.cacheSavings || 0))}`,
-  );
-
-  const providers = aggregateCacheByProvider(stats.byModel);
-  if (providers.length) {
-    lines.push("", sectionTitle("CACHE BY PROVIDER", width));
-    lines.push(style.dim("  Provider                   Req      Hit       Read      Write"));
-    for (const row of providers) {
-      const name = providerLabel(row.provider).slice(0, 24).padEnd(24);
-      const req = compactNumber(row.totalRequests).padStart(7);
-      const hit = percent(row.cacheRate).padStart(7);
-      const read = compactNumber(row.totalCacheReadTokens).padStart(9);
-      const write = compactNumber(row.totalCacheWriteTokens).padStart(9);
-      lines.push(`  ${name} ${req} ${cacheColor(row.cacheRate, hit)} ${read} ${write}`);
-    }
-  }
-
-  const models = sortModels(stats.byModel);
-  if (models.length) {
-    lines.push("", sectionTitle("CACHE BY MODEL", width));
-    lines.push(style.dim("  Provider             Model                             Req     Hit      Read     Write    Save"));
-    for (const row of models) {
-      const provider = providerLabel(String(row.provider ?? "unknown")).slice(0, 18).padEnd(18);
-      const model = String(row.model ?? "unknown").slice(0, 32).padEnd(32);
-      const req = compactNumber(Number(row.totalRequests || 0)).padStart(7);
-      const rate = Number(row.cacheRate || 0);
-      const hit = percent(rate).padStart(7);
-      const read = compactNumber(Number(row.totalCacheReadTokens || 0)).padStart(8);
-      const write = compactNumber(Number(row.totalCacheWriteTokens || 0)).padStart(8);
-      const save = percent(Number(row.cacheSavings || 0)).padStart(7);
-      lines.push(`  ${provider} ${model} ${req} ${cacheColor(rate, hit)} ${read} ${write} ${save}`);
-    }
-  }
-  return lines;
-}
-
-function stateText(state, refreshing) {
-  if (!state) return refreshing ? style.yellow("↻ refreshing") : "";
-  const stamp = state.updatedAt ? ` · ${formatAge(state.updatedAt)} ago` : "";
-  if (state.status === "fresh") return style.green(`✓ fresh${stamp}`);
-  if (state.status === "refreshing") return style.yellow(`↻ refreshing${stamp ? ` · last ${formatClock(state.updatedAt)}` : ""}`);
-  if (state.status === "error") return style.red(`⚠ stale${stamp}`);
-  return style.dim(`stale${stamp}`);
-}
-
-function renderQuota(quota, width, providerStates, refreshing) {
-  const reports = quota?.reports ?? [];
-  const lines = [sectionTitle("QUOTA", width)];
-  if (!reports.length) {
-    lines.push(refreshing ? style.dim("  Waiting for quota results…") : style.dim("  No quota data available"));
-    return lines;
-  }
-  const grouped = new Map();
-  for (const report of reports) {
-    const bucket = grouped.get(report.provider) ?? [];
-    bucket.push(report);
-    grouped.set(report.provider, bucket);
-  }
-  for (const provider of [...grouped.keys()].sort((a, b) => providerLabel(a).localeCompare(providerLabel(b)))) {
-    const providerReports = grouped.get(provider) ?? [];
-    lines.push("");
-    const state = stateText(providerStates.get(provider), refreshing);
-    lines.push(`  ${style.bold(providerLabel(provider))}${state ? `  ${state}` : ""}`);
-    providerReports.sort((a, b) => accountLabel(a, "").localeCompare(accountLabel(b, ""))).forEach((report, index) => {
-      const identity = accountLabel(report, providerReports.length > 1 ? `Account ${index + 1}` : "Account");
-      const plan = planLabel(report);
-      lines.push(`    ${style.cyan(identity)}${plan ? style.dim(` · ${plan}`) : ""}`);
-      const groups = quotaDisplayGroups(report);
-      const hasLimits = groups.some(group => group.limits.length > 0);
-      if (!hasLimits) { lines.push(style.dim("      no quota windows reported")); return; }
-
-      const groupedAntigravity = report.provider === "google-antigravity" && groups.some(group => group.label);
-      for (const group of groups) {
-        if (groupedAntigravity && group.label) lines.push(`      ${style.bold(group.label)}`);
-        for (const limit of group.limits) {
-          const fraction = usedFraction(limit.amount ?? {});
-          const windowLabel = String(limit.window?.label || limit.scope?.windowId || limit.id || "limit");
-          const labelWidth = groupedAntigravity ? 20 : 22;
-          const label = windowLabel.slice(0, labelWidth).padEnd(labelWidth);
-          const barWidth = Math.max(6, Math.min(18, width - (groupedAntigravity ? 52 : 50)));
-          const bar = progressBar(fraction, barWidth);
-          const pct = percent(fraction).padStart(6);
-          const reset = formatReset(limit.window?.resetsAt).padStart(13);
-          const indent = groupedAntigravity ? "        " : "      ";
-          lines.push(`${indent}${label} ${bar} ${quotaColor(fraction, pct)} ${reset}`.trimEnd());
-        }
-      }
-    });
-  }
-  return lines;
-}
+const MAX_EVENTS = 60;
 
 export class OmpTopApp {
   #redact;
+  #version;
+  #channel;
   #ui;
   #done;
+  #viewIndex = 0;
   #scroll = 0;
-  #snapshot = { stats: undefined, quota: undefined, statsUpdatedAt: undefined, quotaUpdatedAt: undefined };
+  #scrollByView = new Map();
+  #bodyHeight = 1;
+  #viewportWidth = 100;
+  #viewportHeight = 24;
+  #inspecting = false;
+  #inspectionByView = new Map();
+  #entries = [];
+  #providers = [];
+  #searchDraft;
+  #history = [];
+  #windowHours = 24;
+  #requestWindow;
+  #windowLoading = false;
+  #windowRun = 0;
+  #comparisonOpen = false;
+  #alerts = new QuotaAlertPolicy();
+  #snapshot = { stats: undefined, quota: undefined, cacheDiagnostics: undefined, statsUpdatedAt: undefined, quotaUpdatedAt: undefined };
   #states = new Map();
+  #events = [];
   #status = "";
   #statusAt = 0;
   #statsRefreshing = false;
   #statsRefreshStartedAt;
   #statsError;
-  #statsPulse;
   #quotaRefreshing = false;
   #quotaRun;
+  #statsAutoTimer;
+  #quotaAutoTimer;
+  #countdownTicker;
+  #statsNextAt;
+  #quotaNextAt;
   #disposed = false;
   #deps;
 
-  constructor({ redact = false, ui, deps = {} } = {}) {
+  constructor({ redact = false, notify = false, version = "", channel = "", ui, deps = {} } = {}) {
     this.#redact = redact;
+    this.#alerts.setEnabled(notify);
+    this.#version = version;
+    this.#channel = channel;
     this.#done = Promise.withResolvers();
     this.#deps = {
       fetchStats: deps.fetchStats ?? fetchStats,
+      loadRequestWindow: deps.loadRequestWindow ?? loadRequestWindow,
+      notify: deps.notify ?? (() => { if (process.stdout.isTTY) process.stdout.write("\x07"); }),
       loadHistoricalQuota: deps.loadHistoricalQuota ?? loadHistoricalQuota,
       createQuotaRefresh: deps.createQuotaRefresh ?? (() => new ProgressiveQuotaRefresh()),
+      loadCacheDiagnostics: deps.loadCacheDiagnostics ?? loadCacheDiagnostics,
+      now: deps.now ?? (() => Date.now()),
+      setTimeout: deps.setTimeout ?? setTimeout,
+      clearTimeout: deps.clearTimeout ?? clearTimeout,
+      setInterval: deps.setInterval ?? setInterval,
+      clearInterval: deps.clearInterval ?? clearInterval,
     };
-    this.#ui = ui ?? new TerminalUI({ render: (w, h) => this.render(w, h), input: data => this.handleInput(data) });
+    this.#ui = ui ?? new TerminalUI({ render: (w, h) => this.render(w, h), input: data => this.handleInput(data), paste: text => this.handlePaste(text) });
   }
 
   async run() {
     this.#ui.start();
+    this.#pushEvent("info", t("top.monitorStarted"));
+    if (!this.#countdownTicker) {
+      this.#countdownTicker = this.#deps.setInterval(() => {
+        if (!this.#disposed) this.#ui.draw();
+      }, COUNTDOWN_REDRAW_MS);
+    }
     void this.#bootstrap();
     return this.#done.promise;
   }
@@ -195,9 +101,52 @@ export class OmpTopApp {
     if (this.#disposed) return;
     this.#disposed = true;
     this.#quotaRun?.cancel();
-    if (this.#statsPulse) clearInterval(this.#statsPulse);
-    this.#statsPulse = undefined;
+    this.#clearStatsSchedule();
+    this.#clearQuotaSchedule();
+    if (this.#countdownTicker) this.#deps.clearInterval(this.#countdownTicker);
+    this.#countdownTicker = undefined;
     this.#ui.stop();
+  }
+
+  #pushEvent(level, message) {
+    this.#events.push({ at: this.#deps.now(), level, message: String(message) });
+    if (this.#events.length > MAX_EVENTS) this.#events.splice(0, this.#events.length - MAX_EVENTS);
+  }
+
+  #clearStatsSchedule() {
+    if (this.#statsAutoTimer) this.#deps.clearTimeout(this.#statsAutoTimer);
+    this.#statsAutoTimer = undefined;
+    this.#statsNextAt = undefined;
+  }
+
+  #clearQuotaSchedule() {
+    if (this.#quotaAutoTimer) this.#deps.clearTimeout(this.#quotaAutoTimer);
+    this.#quotaAutoTimer = undefined;
+    this.#quotaNextAt = undefined;
+  }
+
+  #armStatsSchedule() {
+    if (this.#disposed) return;
+    this.#clearStatsSchedule();
+    this.#statsNextAt = nextRefreshAt(this.#deps.now(), STATS_AUTO_REFRESH_MS);
+    this.#statsAutoTimer = this.#deps.setTimeout(() => {
+      this.#statsAutoTimer = undefined;
+      this.#statsNextAt = undefined;
+      this.#refreshStats();
+    }, STATS_AUTO_REFRESH_MS);
+    this.#ui.draw();
+  }
+
+  #armQuotaSchedule() {
+    if (this.#disposed) return;
+    this.#clearQuotaSchedule();
+    this.#quotaNextAt = nextRefreshAt(this.#deps.now(), QUOTA_AUTO_REFRESH_MS);
+    this.#quotaAutoTimer = this.#deps.setTimeout(() => {
+      this.#quotaAutoTimer = undefined;
+      this.#quotaNextAt = undefined;
+      this.startQuotaRefresh();
+    }, QUOTA_AUTO_REFRESH_MS);
+    this.#ui.draw();
   }
 
   async #bootstrap() {
@@ -205,133 +154,383 @@ export class OmpTopApp {
       const historical = await this.#deps.loadHistoricalQuota(this.#redact);
       if (historical.payload) {
         this.#snapshot.quota = historical.payload;
-        this.#snapshot.quotaUpdatedAt = historical.payload.generatedAt;
+        const enabled = this.#alerts.enabled;
+        this.#alerts.setEnabled(false);
+        this.#alerts.evaluate(historical.payload, { now: this.#deps.now() });
+        this.#alerts.setEnabled(enabled);
+        const reportTimes = (historical.payload.reports ?? []).map(report => Number(report.fetchedAt)).filter(Number.isFinite);
+        this.#snapshot.quotaUpdatedAt = reportTimes.length
+          ? Math.max(...reportTimes)
+          : historical.payload.generatedAt;
         for (const report of historical.payload.reports ?? []) {
           const old = this.#states.get(report.provider);
           this.#states.set(report.provider, { status: "stale", updatedAt: Math.max(old?.updatedAt ?? 0, report.fetchedAt ?? 0) });
         }
+        this.#pushEvent("info", t("top.loadedHistory"));
         this.#ui.draw();
       }
-    } catch {}
+    } catch (error) {
+      this.#pushEvent("warn", t("top.historyUnavailable", { message: String(error?.message || error) }));
+    }
     void this.refresh();
   }
 
-  setStatus(text) { this.#status = text; this.#statusAt = Date.now(); this.#ui.draw(); }
+  setStatus(text) { this.#status = text; this.#statusAt = this.#deps.now(); this.#ui.draw(); }
 
   async refresh() {
-    if (!this.#statsRefreshing) {
-      this.#statsRefreshing = true;
-      this.#statsRefreshStartedAt = Date.now();
-      this.#statsError = undefined;
-      if (this.#statsPulse) clearInterval(this.#statsPulse);
-      this.#statsPulse = setInterval(() => {
-        if (!this.#disposed && this.#statsRefreshing) this.#ui.draw();
-      }, 1000);
-      this.#ui.draw();
-      void this.#deps.fetchStats().then(raw => {
+    this.#clearStatsSchedule();
+    this.#clearQuotaSchedule();
+    this.#refreshStats();
+    if (!this.#quotaRefreshing) this.startQuotaRefresh();
+  }
+
+  #refreshStats() {
+    if (this.#statsRefreshing || this.#disposed) return;
+    this.#clearStatsSchedule();
+    this.#statsRefreshing = true;
+    this.#statsRefreshStartedAt = this.#deps.now();
+    this.#statsError = undefined;
+    this.#pushEvent("info", t("top.statsRefreshStarted"));
+    this.#ui.draw();
+
+    void (async () => {
+      try {
+        const raw = await this.#deps.fetchStats();
         if (this.#disposed) return;
         this.#snapshot.stats = normalizeStats(raw);
-        this.#snapshot.statsUpdatedAt = Date.now();
+        this.#snapshot.statsUpdatedAt = this.#deps.now();
         this.#statsError = undefined;
-        this.setStatus(this.#quotaRefreshing ? "Stats refreshed · quota continues in background" : "Stats refreshed");
-      }).catch(error => {
+        try {
+          this.#snapshot.cacheDiagnostics = await this.#deps.loadCacheDiagnostics();
+        } catch {
+          this.#snapshot.cacheDiagnostics = undefined;
+        }
+        this.#pushEvent("ok", t("top.statsRefreshedEvent", { count: this.#snapshot.stats.byModel.length }));
+        this.setStatus(this.#quotaRefreshing ? t("top.statsRefreshedQuotaPending") : t("top.statsRefreshed"));
+      } catch (error) {
         if (!this.#disposed) {
           this.#statsError = String(error?.message || error);
-          this.setStatus(style.yellow(`Stats refresh failed: ${this.#statsError}`));
+          this.#pushEvent("error", `stats refresh failed: ${this.#statsError}`);
+          this.setStatus(style.yellow(t("top.statsRefreshFailed", { message: this.#statsError })));
         }
-      }).finally(() => {
+      } finally {
         this.#statsRefreshing = false;
         this.#statsRefreshStartedAt = undefined;
-        if (this.#statsPulse) clearInterval(this.#statsPulse);
-        this.#statsPulse = undefined;
+        if (!this.#disposed) { this.#armStatsSchedule(); void this.#loadWindow(); }
         this.#ui.draw();
-      });
+      }
+    })();
+  }
+
+  async #loadWindow() {
+    const run = ++this.#windowRun;
+    this.#windowLoading = true;
+    this.#ui.draw();
+    try {
+      const result = await this.#deps.loadRequestWindow({ hours: this.#windowHours, now: this.#deps.now() });
+      if (!this.#disposed && run === this.#windowRun) this.#requestWindow = result;
+    } catch (error) {
+      if (!this.#disposed && run === this.#windowRun) this.#requestWindow = { available: false, reason: String(error.message) };
+    } finally {
+      if (!this.#disposed && run === this.#windowRun) { this.#windowLoading = false; this.#ui.draw(); }
     }
-    if (!this.#quotaRefreshing) this.startQuotaRefresh();
+  }
+
+  #notifyQuota() {
+    const alerts = this.#alerts.evaluate(this.#snapshot.quota, { now: this.#deps.now(), providerStates: this.#states });
+    for (const alert of alerts) this.#pushEvent("warn", t("notify.alert", { provider: providerLabel(alert.provider), label: alert.label, status: t("notify." + alert.status) }));
+    if (alerts.length) this.#deps.notify();
   }
 
   startQuotaRefresh() {
     if (this.#quotaRefreshing || this.#disposed) return;
+    this.#clearQuotaSchedule();
     this.#quotaRefreshing = true;
     for (const [provider, state] of this.#states) this.#states.set(provider, { ...state, status: "refreshing", error: undefined });
     const runner = this.#deps.createQuotaRefresh();
     this.#quotaRun = runner;
-    this.setStatus("Refreshing quota progressively…");
+    this.#pushEvent("info", t("top.quotaRefreshStarted"));
+    this.setStatus(t("top.quotaRefreshing"));
+
     void runner.run(this.#redact, {
       onProvider: (provider, reports, updatedAt) => {
         if (this.#disposed || this.#quotaRun !== runner) return;
         this.#snapshot.quota = mergeProviderReports(this.#snapshot.quota, provider, reports);
         this.#snapshot.quotaUpdatedAt = Math.max(this.#snapshot.quotaUpdatedAt ?? 0, updatedAt);
         this.#states.set(provider, { status: "fresh", updatedAt });
-        this.setStatus(`${providerLabel(provider)} quota updated · slower providers still refreshing`);
+        this.#notifyQuota();
+        this.#pushEvent("ok", t("top.providerUpdatedEvent", { provider: providerLabel(provider) }));
+        this.setStatus(t("top.providerUpdated", { provider: providerLabel(provider) }));
       },
       onComplete: payload => {
         if (this.#disposed || this.#quotaRun !== runner) return;
         this.#snapshot.quota = payload;
-        this.#snapshot.quotaUpdatedAt = payload.generatedAt ?? Date.now();
+        const reportTimes = (payload.reports ?? []).map(report => Number(report.fetchedAt)).filter(Number.isFinite);
+        this.#snapshot.quotaUpdatedAt = reportTimes.length
+          ? Math.max(...reportTimes)
+          : payload.generatedAt ?? this.#deps.now();
         const live = new Set((payload.reports ?? []).map(report => report.provider));
         for (const provider of live) {
           const reports = (payload.reports ?? []).filter(report => report.provider === provider);
-          const updatedAt = Math.max(...reports.map(report => report.fetchedAt ?? payload.generatedAt ?? Date.now()));
+          const updatedAt = Math.max(...reports.map(report => report.fetchedAt ?? payload.generatedAt ?? this.#deps.now()));
           this.#states.set(provider, { status: "fresh", updatedAt });
         }
-        for (const [provider, state] of this.#states) if (!live.has(provider) && state.status === "refreshing") this.#states.set(provider, { ...state, status: "stale" });
-        this.setStatus("Quota refresh complete");
+        for (const [provider, state] of this.#states) {
+          if (!live.has(provider) && state.status === "refreshing") this.#states.set(provider, { ...state, status: "stale" });
+        }
+        this.#notifyQuota();
+        this.#pushEvent("ok", t("top.quotaCompleteEvent", { count: live.size }));
+        this.setStatus(t("top.quotaComplete"));
       },
       onError: message => {
         if (this.#disposed || this.#quotaRun !== runner) return;
-        for (const [provider, state] of this.#states) if (state.status === "refreshing") this.#states.set(provider, { ...state, status: "error", error: message });
-        this.setStatus(style.yellow(`Quota refresh ended with error: ${message}`));
+        for (const [provider, state] of this.#states) {
+          if (state.status === "refreshing") this.#states.set(provider, { ...state, status: "error", error: message });
+        }
+        this.#pushEvent("error", t("top.quotaErrorEvent", { message }));
+        this.setStatus(style.yellow(t("top.quotaError", { message })));
       },
     }).finally(() => {
       if (this.#quotaRun !== runner) return;
       this.#quotaRun = undefined;
       this.#quotaRefreshing = false;
-      for (const [provider, state] of this.#states) if (state.status === "refreshing") this.#states.set(provider, { ...state, status: "stale" });
+      for (const [provider, state] of this.#states) {
+        if (state.status === "refreshing") this.#states.set(provider, { ...state, status: "stale" });
+      }
+      if (!this.#disposed) this.#armQuotaSchedule();
       this.#ui.draw();
     });
   }
 
-  handleInput(data) {
-    if ([Keys.ctrlC, Keys.ctrlD, Keys.escape].includes(data) || data === "q") { this.#done.resolve(); return; }
-    if (data === "r") { void this.refresh(); return; }
-    if (data === "j" || data === Keys.down) this.#scroll += 1;
-    else if (data === "k" || data === Keys.up) this.#scroll = Math.max(0, this.#scroll - 1);
-    else if (data === Keys.pageDown) this.#scroll += Math.max(1, this.#ui.rows - 5);
-    else if (data === Keys.pageUp) this.#scroll = Math.max(0, this.#scroll - Math.max(1, this.#ui.rows - 5));
-    else if (Keys.home.has(data)) this.#scroll = 0;
-    else if (Keys.end.has(data)) this.#scroll = Number.MAX_SAFE_INTEGER;
-    else return;
+  #switchView(index) {
+    if (index === this.#viewIndex) return;
+    this.#scrollByView.set(this.#viewIndex, this.#scroll);
+    this.#viewIndex = index;
+    this.#scroll = this.#scrollByView.get(index) ?? 0;
     this.#ui.draw();
   }
 
-  render(width, height) {
-    const dashboardWidth = Math.max(40, Math.min(width, DASHBOARD_MAX_WIDTH));
-    const statsTime = formatClock(this.#snapshot.statsUpdatedAt);
-    const quotaTime = formatClock(this.#snapshot.quotaUpdatedAt);
-    const left = ` ${style.bold("OMP TOP")}${process.env.OMP_PROFILE ? style.dim(` · profile ${process.env.OMP_PROFILE}`) : ""}`;
-    const right = style.dim(`stats ${statsTime} · quota ${quotaTime}`);
-    const pad = Math.max(2, dashboardWidth - visibleWidth(left) - visibleWidth(right));
-    const header = truncateAnsi(`${left}${" ".repeat(pad)}${right}`, dashboardWidth);
+  #inspectionState() {
+    if (!this.#inspectionByView.has(this.#viewIndex)) this.#inspectionByView.set(this.#viewIndex, { detailOffset: 0 });
+    return this.#inspectionByView.get(this.#viewIndex);
+  }
 
+  #follow(target) {
+    if (!target) return;
+    const previous = { viewIndex: this.#viewIndex, state: { ...this.#inspectionState() } };
+    this.#switchView(VIEWS.findIndex(view => view.id === target.view));
+    this.#history.push(previous);
+    this.#inspectionByView.set(this.#viewIndex, { ...target, detailOffset: 0 });
+    this.#inspecting = true;
+    this.#ui.draw();
+  }
+
+  #viewContext() {
     const statsState = {
       refreshing: this.#statsRefreshing,
       startedAt: this.#statsRefreshStartedAt,
       updatedAt: this.#snapshot.statsUpdatedAt,
       error: this.#statsError,
     };
-    const body = ["", ...renderStats(this.#snapshot.stats, dashboardWidth, statsState), "", ...renderQuota(this.#snapshot.quota, dashboardWidth, this.#states, this.#quotaRefreshing), ""];
-    const footer = [
-      truncateAnsi(style.dim("─".repeat(Math.max(1, dashboardWidth))), dashboardWidth),
-      truncateAnsi(` ${Date.now() - this.#statusAt < STATUS_TTL_MS ? this.#status : ""}`, dashboardWidth),
-      truncateAnsi(style.dim(" r refresh · ↑/↓/j/k scroll · PgUp/PgDn · Home/End · q/Esc/Ctrl+D/Ctrl+C exit"), dashboardWidth),
-    ];
-    const bodyHeight = Math.max(1, height - 1 - footer.length);
+    const local = this.#requestWindow?.available && this.#requestWindow.hours === this.#windowHours ? this.#requestWindow : undefined;
+    return {
+      stats: local ? { ...local.stats, windowHours: this.#windowHours } : this.#windowHours === 24 ? this.#snapshot.stats : undefined,
+      ompStats: local ? this.#snapshot.stats : undefined,
+      statsState: local ? { refreshing: this.#windowLoading, updatedAt: local.untilMs }
+        : this.#windowHours !== 24 ? { refreshing: this.#windowLoading, error: this.#requestWindow?.reason } : statsState,
+      quota: this.#snapshot.quota,
+      cacheDiagnostics: local?.diagnostics ?? (this.#windowHours === 24 ? this.#snapshot.cacheDiagnostics : undefined),
+      providerStates: this.#states,
+      quotaRefreshing: this.#quotaRefreshing,
+      quotaNextAt: this.#quotaNextAt,
+      now: this.#deps.now(),
+      events: this.#events,
+    };
+  }
+
+  // Input must see current rows even when the next terminal paint is deferred.
+  #syncInspection(context = this.#viewContext()) {
+    const state = this.#inspectionState();
+    const explored = exploreEntries(VIEWS[this.#viewIndex].id, context, state);
+    this.#entries = explored.entries;
+    this.#providers = explored.providers;
+    state.emptyMessage = explored.reason;
+    if (this.#inspecting && !this.#entries.some(row => row.id === state.selected)) {
+      state.selected = this.#entries[0]?.id;
+      state.detailOffset = 0;
+    }
+  }
+
+  handlePaste(text) {
+    // Pasted text is data only; dashboard shortcuts must never run from paste.
+    if (this.#searchDraft === undefined) return;
+    this.#searchDraft = (this.#searchDraft + String(text).replace(/[\x00-\x1f\x7f-\x9f]/gu, " ")).slice(0, 512);
+    this.#ui.draw();
+  }
+
+  handleInput(data) {
+    if (this.#searchDraft !== undefined) {
+      if (data === Keys.escape) this.#searchDraft = undefined;
+      else if (data === "\r" || data === "\n") {
+        Object.assign(this.#inspectionState(), { query: this.#searchDraft, selected: undefined, detailOffset: 0 });
+        this.#searchDraft = undefined;
+      } else if (data === "\x7f" || data === "\b") this.#searchDraft = [...this.#searchDraft].slice(0,-1).join("");
+      else if (data === "\x15") this.#searchDraft = "";
+      else if (!/[\x00-\x1f\x7f]/u.test(data)) this.#searchDraft = (this.#searchDraft + data).slice(0,512);
+      else if (data === Keys.ctrlC || data === Keys.ctrlD) this.#done.resolve();
+      this.#ui.draw(); return;
+    }
+    this.#prepareViewport(
+      this.#ui.columns ?? this.#viewportWidth,
+      this.#ui.columns !== undefined ? (this.#ui.rows ?? this.#viewportHeight) : this.#viewportHeight,
+    );
+    if (data === "w") {
+      this.#windowHours = [1, 6, 24][([1, 6, 24].indexOf(this.#windowHours) + 1) % 3];
+      this.#requestWindow = undefined;
+      this.#scroll = 0;
+      void this.#loadWindow(); return;
+    }
+    if (data === "v") { this.#comparisonOpen = !this.#comparisonOpen; this.#scroll = 0; this.#ui.draw(); return; }
+    if (data === Keys.escape && this.#comparisonOpen) { this.#comparisonOpen = false; this.#scroll = 0; this.#ui.draw(); return; }
+    if (data === "n") {
+      if (!this.#alerts.enabled) this.#notifyQuota();
+      this.#alerts.setEnabled(!this.#alerts.enabled);
+      this.setStatus(t(this.#alerts.enabled ? "notify.on" : "notify.off")); return;
+    }
+    if (data === "?" && !this.#inspecting) { this.#inspecting = true; this.#inspectionState().help = true; this.#ui.draw(); return; }
+    if (data === "/") { this.#inspecting = true; this.#searchDraft = this.#inspectionState().query ?? ""; this.#ui.draw(); return; }
+    if (this.#inspecting && (data === "b" || data === Keys.escape)) {
+      const previous = this.#history.pop();
+      if (previous) {
+        this.#switchView(previous.viewIndex);
+        this.#inspectionByView.set(previous.viewIndex, previous.state);
+      } else if (data === Keys.escape) this.#inspecting = false;
+      this.#ui.draw(); return;
+    }
+    if (data === "\r" || data === "\n") {
+      if (this.#inspecting) this.#follow(this.#entries.find(row => row.id === this.#inspectionState().selected)?.target);
+      else { this.#inspecting = true; this.#ui.draw(); }
+      return;
+    }
+    if (this.#inspecting && !this.#comparisonOpen) {
+      const state = this.#inspectionState();
+      const index = Math.max(0, this.#entries.findIndex(row => row.id === state.selected));
+      if (["s", "f", "c", "?"].includes(data)) {
+        if (data === "s") state.sort = SORT_ORDERS[(SORT_ORDERS.indexOf(state.sort ?? "source") + 1) % SORT_ORDERS.length];
+        if (data === "f") state.provider = [undefined, ...this.#providers][([undefined, ...this.#providers].indexOf(state.provider) + 1) % (this.#providers.length + 1)];
+        if (data === "c") { state.query = ""; state.provider = undefined; }
+        if (data === "?") { state.help = !state.help; state.detailOffset = 0; }
+        this.#ui.draw(); return;
+      }
+      let next = index;
+      if (data === "j" || data === Keys.down) next++;
+      else if (data === "k" || data === Keys.up) next--;
+      else if (Keys.home.has(data)) next = 0;
+      else if (Keys.end.has(data)) next = this.#entries.length - 1;
+      else if (data === Keys.pageDown) state.detailOffset += Math.max(1, this.#bodyHeight - 6);
+      else if (data === Keys.pageUp) state.detailOffset = Math.max(0, state.detailOffset - Math.max(1, this.#bodyHeight - 6));
+      else next = undefined;
+      if (next !== undefined) {
+        if (next !== index) state.detailOffset = 0;
+        state.selected = this.#entries[Math.max(0, Math.min(next, this.#entries.length - 1))]?.id;
+        this.#ui.draw(); return;
+      }
+    }
+    if ([Keys.ctrlC, Keys.ctrlD, Keys.escape].includes(data) || data === "q") { this.#done.resolve(); return; }
+    if (data === "r") { void this.refresh(); return; }
+    const direct = directViewIndex(data);
+    if (direct !== undefined) { this.#switchView(direct); return; }
+    if (data === Keys.tab || data === Keys.right) { this.#switchView(nextViewIndex(this.#viewIndex, 1)); return; }
+    if (data === Keys.shiftTab || data === Keys.left) { this.#switchView(nextViewIndex(this.#viewIndex, -1)); return; }
+    if (data === "j" || data === Keys.down) this.#scroll += 1;
+    else if (data === "k" || data === Keys.up) this.#scroll = Math.max(0, this.#scroll - 1);
+    else if (data === Keys.pageDown) this.#scroll += this.#bodyHeight;
+    else if (data === Keys.pageUp) this.#scroll = Math.max(0, this.#scroll - this.#bodyHeight);
+    else if (Keys.home.has(data)) this.#scroll = 0;
+    else if (Keys.end.has(data)) this.#scroll = Number.MAX_SAFE_INTEGER;
+    else return;
+    this.#ui.draw();
+  }
+
+  #freshnessLane(nextAt, refreshing) {
+    if (refreshing) return t("top.refreshingShort");
+    if (!nextAt) return t("top.pending");
+    return t("top.nextCountdown", { next: formatCountdown(nextAt, this.#deps.now()) });
+  }
+
+  // Normalize row selection and viewport bounds independently of terminal paint.
+  // This keeps boundary/reversal bursts (End, Up or repeated PgDn, PgUp) ordered.
+  #prepareViewport(width, height) {
+    const workspace = workspaceGeometry(width);
+    const view = VIEWS[this.#viewIndex] ?? VIEWS[0];
+    const context = this.#viewContext();
+
+    const compactChrome = height < 16;
+    const bodyHeight = Math.max(0, height - (compactChrome ? 5 : 8));
+    this.#bodyHeight = Math.max(1, bodyHeight);
+    const state = this.#inspectionState();
+    this.#syncInspection(context);
+    const windowState = { hours: this.#windowHours, result: this.#requestWindow, loading: this.#windowLoading };
+    const body = this.#comparisonOpen ? renderComparison(windowState, workspace.innerWidth) : this.#inspecting
+      ? renderInspection(this.#entries, state, workspace.innerWidth, bodyHeight)
+      : renderWorkspace(view.id, context, workspace.innerWidth, height);
+    if (!this.#comparisonOpen && !this.#inspecting) {
+      // Small terminals: one clipped context line, no spacer — body rows are scarce.
+      const summary = windowSummary(windowState);
+      if (compactChrome || workspace.innerWidth < 72) body.unshift(style.dim(truncateAnsi(summary, workspace.innerWidth)));
+      else body.unshift(...wrapLines([summary], workspace.innerWidth), "");
+    }
     const maxOffset = Math.max(0, body.length - bodyHeight);
+    const savedScroll = this.#scroll;
     if (this.#scroll === Number.MAX_SAFE_INTEGER) this.#scroll = maxOffset;
     this.#scroll = Math.max(0, Math.min(this.#scroll, maxOffset));
     const visible = body.slice(this.#scroll, this.#scroll + bodyHeight);
+    if (this.#inspecting && !this.#comparisonOpen) this.#scroll = savedScroll;
     while (visible.length < bodyHeight) visible.push("");
-    return [header, ...visible, ...footer];
+
+    return { view, state, compactChrome, maxOffset, visible };
+  }
+
+  render(width, height) {
+    this.#viewportWidth = width;
+    this.#viewportHeight = height;
+    const workspace = workspaceGeometry(width);
+    const identity = [style.bold("OMP TOP")];
+    if (this.#version) identity.push(`v${this.#version}`);
+    if (this.#channel) identity.push(this.#channel);
+    if (process.env.OMP_PROFILE) identity.push(t("top.profile", { name: process.env.OMP_PROFILE }));
+    const title = identity.join(style.dim(" · "));
+
+    const freshness = style.dim(t("top.statsFreshness", {
+          stats: this.#freshnessLane(this.#statsNextAt, this.#statsRefreshing),
+          quota: this.#freshnessLane(this.#quotaNextAt, this.#quotaRefreshing),
+        }));
+    const tabs = renderViewTabs(this.#viewIndex, workspace.innerWidth);
+    const navLine = tabs;
+
+    const { view, state, compactChrome, maxOffset, visible } = this.#prepareViewport(width, height);
+
+    const activeStatus = this.#deps.now() - this.#statusAt < STATUS_TTL_MS && this.#status
+      ? this.#status
+      : style.dim(t("state.ready", { view: viewLabel(view) }));
+    const scrollState = maxOffset > 0
+      ? style.dim(t("top.scroll", { current: this.#scroll + 1, total: maxOffset + 1 }))
+      : "";
+    const inspectionStatus = `${t("explore.search")}: ${state.query || "—"} · ${t("explore.sort")}: ${t("explore." + (state.sort ?? "source"))} · ${t("explore.provider")}: ${state.provider || state.scope?.provider || t("explore.all")}${state.level ? " · " + t("explore." + state.level) : ""}`;
+    const statusLine = this.#searchDraft !== undefined ? `${t("explore.search")}: /${this.#searchDraft}▌`
+      : this.#inspecting && !this.#comparisonOpen ? inspectionStatus : composeSides(activeStatus, scrollState, workspace.innerWidth);
+    const hints = this.#searchDraft !== undefined ? t("explore.searchHint") : this.#inspecting && !this.#comparisonOpen ? t("explore.hints") : t("explore.dashboardHints");
+
+    const framed = [
+      frameTop(workspace.width, title),
+      frameRow(navLine, workspace.width),
+      ...(!compactChrome ? [frameRow(composeSides(freshness, `w:${this.#windowHours}h · n:${this.#alerts.enabled ? "on" : "off"}`, workspace.innerWidth), workspace.width), frameDivider(workspace.width)] : []),
+      ...visible.map(line => frameRow(line, workspace.width)),
+      ...(!compactChrome ? [frameDivider(workspace.width)] : []),
+      frameRow(statusLine, workspace.width),
+      frameRow(style.dim(fitSegments(hints, workspace.innerWidth, " · ", this.#searchDraft !== undefined ? 1 : -1)), workspace.width),
+      frameBottom(workspace.width),
+    ];
+    return framed.map(line => offsetLine(line, workspace.offset));
   }
 }

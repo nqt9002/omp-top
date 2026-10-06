@@ -4,7 +4,7 @@ import {
   parseVersion, compareVersions, versionChannel, releaseChannel, selectRelease,
   nextBetaTag, selectBetaForLine, validateReleaseInput,
 } from '../src/release-policy.mjs';
-import { validatePromotion, inferHotfixIssue } from '../scripts/release.mjs';
+import { validatePromotion } from '../scripts/release.mjs';
 
 const published = (tag, prerelease = false, draft = false, target = undefined) => ({ tag_name: tag, prerelease, draft, target_commitish: target });
 test('SemVer compares numeric beta identifiers and ignores build metadata', () => {
@@ -83,11 +83,4 @@ test('hotfix exception is explicit, issue-backed, next-patch only', () => {
   assert.throws(() => validatePromotion({ ...input, version: '0.6.0' }));
   assert.throws(() => validatePromotion({ ...input, hotfixIssue: '42;echo' }));
   assert.throws(() => validatePromotion({ ...input, candidate: published('v0.5.4-beta.1', true) }));
-});
-
-test('next-patch merge can infer an issue-backed hotfix for automatic stable publication', () => {
-  const latest = published('v0.5.3');
-  assert.equal(inferHotfixIssue({ version: '0.5.4', latest, message: 'fix: stable bridge\n\nFixes #21' }), '21');
-  assert.equal(inferHotfixIssue({ version: '0.6.0', latest, message: 'release: 0.6.0\n\nFixes #21' }), '');
-  assert.equal(inferHotfixIssue({ version: '0.5.4', latest, message: 'fix: no issue reference' }), '');
 });

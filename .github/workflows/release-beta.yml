@@ -1,18 +1,28 @@
 name: Release Beta
 on:
+  push:
+    branches: [develop]
+    paths:
+      - 'src/**'
+      - 'package.json'
+      - 'install.sh'
+      - 'uninstall.sh'
+      - 'scripts/release.mjs'
+      - '.github/workflows/release-beta.yml'
+      - '.github/workflows/release-checked.yml'
   workflow_dispatch:
     inputs:
       tag:
-        description: 'Existing package version on develop, e.g. v0.6.0-beta.1'
-        required: true
+        description: 'Optional exact recovery tag; normally leave blank so beta.N is derived from release/tag history'
+        required: false
         type: string
       expected_sha:
-        description: 'Full 40-character develop commit SHA to test and publish'
-        required: true
+        description: 'Optional pinned develop SHA; defaults to the selected workflow ref SHA'
+        required: false
         type: string
       notes:
-        description: 'Checkpoint scope and test evidence (at least 20 characters)'
-        required: true
+        description: 'Optional checkpoint evidence; an automatic note is used when blank'
+        required: false
         type: string
 permissions:
   contents: read
@@ -23,6 +33,6 @@ jobs:
     uses: ./.github/workflows/release-checked.yml
     with:
       channel: beta
-      tag: ${{ inputs.tag }}
-      expected_sha: ${{ inputs.expected_sha }}
-      notes: ${{ inputs.notes }}
+      tag: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || '' }}
+      expected_sha: ${{ github.event_name == 'workflow_dispatch' && inputs.expected_sha || github.sha }}
+      notes: ${{ github.event_name == 'workflow_dispatch' && inputs.notes || 'Automatic beta checkpoint after an accepted merge to develop; checked-release tests and artifact verification are required before publication.' }}

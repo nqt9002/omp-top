@@ -38,15 +38,6 @@ export function validatePromotion({ candidate, version, hotfixIssue, notes, late
   if (releaseChannel(candidate) !== 'beta' || parseVersion(candidate.tag_name).core.join('.') !== parseVersion(version).core.join('.')) throw new Error('Stable requires a published beta of the same core version');
 }
 
-export function inferHotfixIssue({ version, latest, message }) {
-  if (releaseChannel(latest) !== 'stable') return '';
-  const prior = parseVersion(latest.tag_name), next = parseVersion(version);
-  const nextPatch = next.core[0] === prior.core[0] && next.core[1] === prior.core[1] && BigInt(next.core[2]) === BigInt(prior.core[2]) + 1n;
-  if (!nextPatch) return '';
-  const match = String(message ?? '').match(/(?:Fixes|Closes|Resolves)\s+#([1-9]\d*)/i);
-  return match?.[1] ?? '';
-}
-
 function fetchReleases() {
   return JSON.parse(execFileSync('gh', ['api', '--paginate', '--slurp', `repos/${process.env.GITHUB_REPOSITORY}/releases?per_page=100`], { encoding: 'utf8' })).flat();
 }
@@ -94,14 +85,13 @@ function validate() {
   if (notes.length < 20) throw new Error('Describe the testing/checkpoint in at least 20 characters');
 
   if (channel === 'stable') {
-    const latest = releases.filter(item => releaseChannel(item) === 'stable').sort((a, b) => compareVersions(b.tag_name, a.tag_name))[0];
-    const inferredHotfix = inferHotfixIssue({ version: line, latest, message: git('log', '-1', '--pretty=%B') });
-    const hotfixIssue = process.env.HOTFIX_ISSUE || inferredHotfix;
+    const hotfixIssue = process.env.HOTFIX_ISSUE || '';
     const requestedBeta = process.env.TESTED_BETA || '';
     const candidate = requestedBeta
       ? github(`releases/tags/${encodeURIComponent(requestedBeta)}`)
-      : hotfixIssue ? undefined : selectBetaForLine(releases, line);
-    validatePromotion({ candidate, version: line, hotfixIssue, notes, latest });
+      : selectBetaForLine(releases, line);
+    const latest = releases.filter(item => releaseChannel(item) === 'stable').sort((a, b) => compareVersions(b.tag_name, a.tag_name))[0];
+    validatePromotion({ candidate: hotfixIssue ? undefined : candidate, version: line, hotfixIssue, notes, latest });
     if (candidate && !hotfixIssue) {
       git('merge-base', '--is-ancestor', candidate.tag_name, expectedSha);
       const changed = git('diff', '--name-only', candidate.tag_name, expectedSha, '--', 'src', 'install.sh', 'uninstall.sh', 'LICENSE');
