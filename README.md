@@ -520,7 +520,7 @@ For stable promotion, branch from the exact tested beta, set `package.json.relea
 
 **0.6.0 · stable**
 
-Promoted from the maintainer-tested [v0.6.0-beta.16](https://github.com/nqt9002/omp-top/releases/tag/v0.6.0-beta.16). See [release notes](CHANGELOG.md) for the stable highlights and validation.
+Promoted from the maintainer-tested [v0.6.0-beta.16](https://github.com/nqt9002/omp-top/releases/tag/v0.6.0-beta.16). See [release notes](https://github.com/nqt9002/omp-top/blob/v0.6.0/CHANGELOG.md) for the stable highlights and validation.
 
 ## License
 
