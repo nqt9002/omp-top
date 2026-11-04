@@ -25,6 +25,21 @@ export function quotaLimitTitle(limit) {
   return label;
 }
 
+/** Accounts OMP disabled because their credentials stopped working (for example an expired OAuth login). */
+export function disabledAccounts(payload) {
+  const list = Array.isArray(payload?.disabledCredentials) ? payload.disabledCredentials : [];
+  return list.filter(item => item && typeof item.provider === "string").map(item => {
+    const text = key => typeof item[key] === "string" && item[key].trim() ? item[key].trim() : "";
+    return {
+      key: [item.provider, item.id ?? "", text("accountId") || text("email")].join("\0"),
+      provider: item.provider,
+      account: text("email") || text("accountId") || text("orgName") || (item.id !== undefined ? `#${item.id}` : ""),
+      cause: text("cause"),
+      disabledAtMs: Number.isFinite(item.disabledAtMs) ? item.disabledAtMs : undefined,
+    };
+  });
+}
+
 export function quotaLimitIdsForDisplay(report) {
   return quotaDisplayGroups(report).flatMap(group => group.limits.map(limit => String(limit?.id || ""))).filter(Boolean);
 }
