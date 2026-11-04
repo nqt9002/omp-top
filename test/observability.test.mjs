@@ -356,3 +356,21 @@ test("past quota reset renders a fixed due state instead of counting upward", ()
     setLocale(previous);
   }
 });
+
+test("forecasts need enough usage and observation, and use the whole-cycle burn", () => {
+  const HOUR = 3_600_000, T0 = 1_800_000_000_000;
+  const row = (hoursAgo, used, resetHours) => ({
+    recordedAt: T0 - hoursAgo * HOUR, usedFraction: used, resetsAt: T0 + resetHours * HOUR,
+  });
+  // 9% used after 24 minutes: the burst looks fatal on paper but is not evidence yet.
+  const early = quotaIntelligenceForSeries([row(0.4, 0.0, 4.6), row(0.2, 0.05, 4.6), row(0, 0.09, 4.6)]);
+  assert.notEqual(early.status, "at-risk");
+  assert.notEqual(early.status, "watch");
+
+  // A 6-hour burst at 2%/h on a 7-day window averaging far less must not predict exhaustion.
+  const samples = [];
+  for (let h = 48; h >= 0; h--) samples.push(row(h, h > 6 ? 0.02 + (48 - h) * 0.0005 : 0.04 + (6 - h) * 0.01, 156));
+  const weekly = quotaIntelligenceForSeries(samples);
+  assert.ok(weekly.etaHours > weekly.recentEtaHours, "cycle ETA is longer than the burst ETA");
+  assert.notEqual(weekly.status, "at-risk");
+});

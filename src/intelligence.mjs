@@ -3,6 +3,16 @@ const RESET_DROP = 0.02;
 const RESET_TOLERANCE_MS = 60 * 1000;
 const RECENT_BURN_WINDOW_MS = 4 * HOUR_MS;
 
+// A forecast extrapolates recent burn across the whole remaining window. Early in a
+// window, or with little of the quota used, that is noise, so it must not raise a risk.
+const FORECAST_MIN_OBSERVED_HOURS = 0.5;
+const FORECAST_MIN_USED_FRACTION = 0.15;
+
+export function forecastIsTrustworthy(intelligence) {
+  return Number(intelligence?.usedFraction) >= FORECAST_MIN_USED_FRACTION
+    && Number(intelligence?.observedHours) >= FORECAST_MIN_OBSERVED_HOURS;
+}
+
 function finiteNumber(value) {
   const n = Number(value);
   return Number.isFinite(n) ? n : undefined;
@@ -158,11 +168,14 @@ export function quotaIntelligenceForSeries(rows) {
     }
   }
 
-  const forecastExhaustAt = result.recentProjectedExhaustAt ?? result.projectedExhaustAt;
-  const forecastPace = result.recentPaceRatio ?? result.paceRatio;
+  // Forecast from the whole-cycle burn: the last few hours extrapolated across a
+  // multi-day window mostly predicts the next few hours of a burst, not the exhaustion time.
+  const forecastExhaustAt = result.projectedExhaustAt ?? result.recentProjectedExhaustAt;
+  const forecastPace = result.paceRatio ?? result.recentPaceRatio;
+  const trusted = forecastIsTrustworthy(result);
   if (usedFraction >= 1) result.status = "exhausted";
-  else if (forecastExhaustAt !== undefined && resetsAt !== undefined && forecastExhaustAt < resetsAt) result.status = "at-risk";
-  else if (Number.isFinite(forecastPace) && forecastPace >= 0.8) result.status = "watch";
+  else if (trusted && forecastExhaustAt !== undefined && resetsAt !== undefined && forecastExhaustAt < resetsAt) result.status = "at-risk";
+  else if (trusted && Number.isFinite(forecastPace) && forecastPace >= 0.8) result.status = "watch";
   else if (result.burnPerHour !== undefined || result.recentBurnPerHour !== undefined) result.status = "ok";
   return result;
 }

@@ -1,6 +1,6 @@
 import { parseNoisyJson } from "./json.mjs";
 import { resolveAgentDbPath, spawnUsage } from "./omp.mjs";
-import { quotaIntelligenceBySeries, quotaSeriesKey } from "./intelligence.mjs";
+import { forecastIsTrustworthy, quotaIntelligenceBySeries, quotaSeriesKey } from "./intelligence.mjs";
 
 const LOOKBACK_MS = 30 * 24 * 60 * 60 * 1000;
 const POLL_MS = 400;
@@ -348,17 +348,17 @@ function rebaseHistoricalIntelligence(previousLimit, freshLimit, observedAt) {
   }
 
   const providerStatus = String(freshLimit?.status ?? "");
-  const forecastExhaustAt = Number.isFinite(intelligence.recentProjectedExhaustAt)
-    ? intelligence.recentProjectedExhaustAt
-    : intelligence.projectedExhaustAt;
-  const forecastPace = Number.isFinite(intelligence.recentPaceRatio)
-    ? intelligence.recentPaceRatio
-    : intelligence.paceRatio;
+  const forecastExhaustAt = Number.isFinite(intelligence.projectedExhaustAt)
+    ? intelligence.projectedExhaustAt
+    : intelligence.recentProjectedExhaustAt;
+  const forecastPace = Number.isFinite(intelligence.paceRatio)
+    ? intelligence.paceRatio
+    : intelligence.recentPaceRatio;
   const used = Number.isFinite(intelligence.usedFraction) ? intelligence.usedFraction : freshUsed;
 
   if (providerStatus === "exhausted" || (Number.isFinite(used) && used >= 1)) intelligence.status = "exhausted";
-  else if (Number.isFinite(forecastExhaustAt) && Number.isFinite(freshReset) && forecastExhaustAt < freshReset) intelligence.status = "at-risk";
-  else if (Number.isFinite(forecastPace) && forecastPace >= 0.8) intelligence.status = "watch";
+  else if (forecastIsTrustworthy(intelligence) && Number.isFinite(forecastExhaustAt) && Number.isFinite(freshReset) && forecastExhaustAt < freshReset) intelligence.status = "at-risk";
+  else if (forecastIsTrustworthy(intelligence) && Number.isFinite(forecastPace) && forecastPace >= 0.8) intelligence.status = "watch";
   else if (Number.isFinite(intelligence.burnPerHour) || Number.isFinite(intelligence.recentBurnPerHour)) intelligence.status = "ok";
   else intelligence.status = "unknown";
 

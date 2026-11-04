@@ -1,5 +1,5 @@
 import { aggregateCacheByProvider, cacheRate, sortModels } from "./stats.mjs";
-import { modelPerformanceRows } from "./intelligence.mjs";
+import { forecastIsTrustworthy, modelPerformanceRows } from "./intelligence.mjs";
 import { buildOverviewIntelligence } from "./overview-intelligence.mjs";
 import { disabledAccounts, quotaDisplayGroups, quotaLimitTitle } from "./quota.mjs";
 import { contentGeometry, joinColumns, joinPanels, renderMetricGrid, sectionTitle, wrapLines } from "./layout.mjs";
@@ -165,15 +165,16 @@ function denseQuotaTitle(limit, groupLabel = "") {
 function quotaRiskLevel(limit, fraction) {
   const intel = limit?.intelligence ?? {};
   const status = String(intel.status ?? limit?.status ?? "");
-  const pace = Number.isFinite(Number(intel.recentPaceRatio)) ? Number(intel.recentPaceRatio) : Number(intel.paceRatio);
+  const pace = Number.isFinite(Number(intel.paceRatio)) ? Number(intel.paceRatio) : Number(intel.recentPaceRatio);
   const accel = Number(intel.accelerationRatio);
   if (status === "exhausted" || Number(fraction) >= 1) return "critical";
   if (status === "at-risk") return "critical";
+  const trusted = forecastIsTrustworthy(intel);
   if (status === "watch"
-    || intel.burnTrend === "spike"
-    || intel.burnTrend === "elevated"
-    || (Number.isFinite(pace) && pace >= 0.8)
-    || (Number.isFinite(accel) && accel >= 1.5)
+    || (trusted && (intel.burnTrend === "spike"
+      || intel.burnTrend === "elevated"
+      || (Number.isFinite(pace) && pace >= 0.8)
+      || (Number.isFinite(accel) && accel >= 1.5)))
     || Number(fraction) >= 0.8) return "watch";
   return "normal";
 }
@@ -182,15 +183,15 @@ function quotaIntelligenceInteresting(limit) {
   const intel = limit?.intelligence;
   if (!intel || (intel.sampleCount ?? 0) < 2) return false;
   const status = String(intel.status ?? limit?.status ?? "");
-  const pace = Number.isFinite(Number(intel.recentPaceRatio)) ? Number(intel.recentPaceRatio) : Number(intel.paceRatio);
+  const pace = Number.isFinite(Number(intel.paceRatio)) ? Number(intel.paceRatio) : Number(intel.recentPaceRatio);
   const accel = Number(intel.accelerationRatio);
   return status === "exhausted"
     || status === "at-risk"
     || status === "watch"
-    || intel.burnTrend === "spike"
-    || intel.burnTrend === "elevated"
-    || (Number.isFinite(pace) && pace >= 0.8)
-    || (Number.isFinite(accel) && accel >= 1.5);
+    || (forecastIsTrustworthy(intel) && (intel.burnTrend === "spike"
+      || intel.burnTrend === "elevated"
+      || (Number.isFinite(pace) && pace >= 0.8)
+      || (Number.isFinite(accel) && accel >= 1.5)));
 }
 
 function denseQuotaBar(fraction, width, risk) {
@@ -475,10 +476,10 @@ function compactQuotaBucket(alert) {
 }
 
 function quotaEtaCountdown(quota, now = Date.now()) {
-  const projected = Number.isFinite(Number(quota?.recentProjectedExhaustAt))
-    ? Number(quota.recentProjectedExhaustAt)
-    : Number.isFinite(Number(quota?.projectedExhaustAt))
-      ? Number(quota.projectedExhaustAt)
+  const projected = Number.isFinite(Number(quota?.projectedExhaustAt))
+    ? Number(quota.projectedExhaustAt)
+    : Number.isFinite(Number(quota?.recentProjectedExhaustAt))
+      ? Number(quota.recentProjectedExhaustAt)
       : undefined;
   return Number.isFinite(projected) ? formatCountdown(projected, now) : "-";
 }
@@ -785,13 +786,13 @@ function tableCell(value, width) {
 
 function intelligenceLine(limit, now = Date.now()) {
   const intel = limit?.intelligence;
-  const burnValue = Number.isFinite(intel?.recentBurnPerHour) ? intel.recentBurnPerHour : intel?.burnPerHour;
+  const burnValue = Number.isFinite(intel?.burnPerHour) ? intel.burnPerHour : intel?.recentBurnPerHour;
   if (!intel || (intel.sampleCount ?? 0) < 2 || !Number.isFinite(burnValue)) return style.dim(t("quota.collecting"));
   const burn = formatPercentPerHour(burnValue);
-  const projected = Number.isFinite(Number(intel.recentProjectedExhaustAt))
-    ? Number(intel.recentProjectedExhaustAt)
-    : Number.isFinite(Number(intel.projectedExhaustAt))
-      ? Number(intel.projectedExhaustAt)
+  const projected = Number.isFinite(Number(intel.projectedExhaustAt))
+    ? Number(intel.projectedExhaustAt)
+    : Number.isFinite(Number(intel.recentProjectedExhaustAt))
+      ? Number(intel.recentProjectedExhaustAt)
       : undefined;
   const eta = intel.status === "exhausted"
     ? t("time.due")
@@ -799,7 +800,7 @@ function intelligenceLine(limit, now = Date.now()) {
       ? formatCountdown(projected, now)
       : "-";
   const sustainable = formatPercentPerHour(intel.sustainablePerHour);
-  const paceValue = Number.isFinite(intel.recentPaceRatio) ? intel.recentPaceRatio : intel.paceRatio;
+  const paceValue = Number.isFinite(intel.paceRatio) ? intel.paceRatio : intel.recentPaceRatio;
   const pace = Number.isFinite(paceValue) ? `${paceValue.toFixed(2)}×` : "-";
   let text = t("quota.intelligence", { burn, eta, sustainable, pace });
   if (Number.isFinite(intel.baselineBurnPerHour) && Number.isFinite(intel.accelerationRatio)) {
