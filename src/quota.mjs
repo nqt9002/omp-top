@@ -365,7 +365,7 @@ function rebaseHistoricalIntelligence(previousLimit, freshLimit, observedAt) {
   return intelligence;
 }
 
-const RETAIN_MISSING_ACCOUNT_MS = 7 * 24 * 60 * 60 * 1000;
+const RETAIN_MISSING_ACCOUNT_MS = 60 * 60 * 1000;
 
 function matchesDisabledAccount(report, disabled) {
   const metadata = report?.metadata ?? {};
@@ -377,7 +377,8 @@ function matchesDisabledAccount(report, disabled) {
  * Enrich authoritative final usage JSON with matching read-only history intelligence.
  * Limits are never reintroduced. An account seen recently in history that this fetch did not
  * return (and OMP did not report as disabled) is kept, marked stale, so a transient provider
- * failure does not make it vanish.
+ * failure does not make it vanish. Only the last hour is retained, and only windows that have
+ * not reset yet, so old identities of a re-added account do not linger as phantom accounts.
  */
 export function enrichQuotaPayload(freshPayload, historicalPayload, { now = Date.now() } = {}) {
   const freshReports = Array.isArray(freshPayload?.reports) ? freshPayload.reports : [];
@@ -429,8 +430,10 @@ export function enrichQuotaPayload(freshPayload, historicalPayload, { now = Date
   const disabled = disabledAccounts(freshPayload);
   for (const old of historicalReports) {
     if (used.has(old) || !(now - Number(old.fetchedAt) <= RETAIN_MISSING_ACCOUNT_MS)) continue;
-    if (matchesDisabledAccount(old, disabled)) continue;
-    reports.push({ ...old, status: "stale", missingFromFresh: true });
+    if (matchesDisabledAccount(old, disabled) || freshIdentities.has(reportIdentity(old))) continue;
+    const limits = (old.limits ?? []).filter(limit => !(Number(limit?.window?.resetsAt) <= now));
+    if (!limits.length) continue;
+    reports.push({ ...old, limits, status: "stale", missingFromFresh: true });
   }
   return { ...freshPayload, reports };
 }

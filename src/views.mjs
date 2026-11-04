@@ -902,7 +902,10 @@ function renderQuota(context, width) {
     for (const account of disabled.filter(item => item.provider === provider)) {
       lines.push(`   ${style.cyan(account.account || t("common.account"))}  ${style.red(t("quota.loginExpired"))}`);
       lines.push(style.red(t("quota.loginExpiredHint")));
-      if (account.cause) lines.push(...wrapLines([style.dim(t("quota.disabledCause", { cause: account.cause }))], width));
+      if (account.cause) {
+        const indent = "     ";
+        lines.push(...wrapLines([account.cause], Math.max(10, width - indent.length)).map(line => style.dim(indent + line)));
+      }
     }
   }
   return lines;
