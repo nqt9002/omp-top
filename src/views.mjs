@@ -849,6 +849,7 @@ function renderQuota(context, width) {
         const resets = resetCreditsText(report, now);
         lines.push(`   ${style.cyan(identity)}${plan ? style.dim(` · ${plan}`) : ""}${resets ? ` · ${style.cyan(resets)}` : ""}`);
 
+        if (report.missingFromFresh) lines.push(style.dim(t("quota.accountStale", { time: formatClock(report.fetchedAt) })));
         const groups = quotaDisplayGroups(report);
         const hasLimits = groups.some(group => group.limits.length > 0);
         if (!hasLimits) {

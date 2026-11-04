@@ -265,6 +265,14 @@ export class OmpTopApp {
       },
       onComplete: payload => {
         if (this.#disposed || this.#quotaRun !== runner) return;
+        if (!payload.reports?.length && this.#snapshot.quota?.reports?.length) {
+          // An empty answer is a failed fetch, not proof that every account is gone.
+          this.#snapshot.quota = { ...this.#snapshot.quota, disabledCredentials: payload.disabledCredentials };
+          for (const [provider, state] of this.#states) this.#states.set(provider, { ...state, status: "stale" });
+          this.#pushEvent("warn", t("top.quotaEmptyKeptEvent"));
+          this.setStatus(style.yellow(t("top.quotaEmptyKeptEvent")));
+          return;
+        }
         this.#snapshot.quota = payload;
         const reportTimes = (payload.reports ?? []).map(report => Number(report.fetchedAt)).filter(Number.isFinite);
         this.#snapshot.quotaUpdatedAt = reportTimes.length
