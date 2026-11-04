@@ -4,7 +4,7 @@ import { EventEmitter } from "node:events";
 import { TerminalUI, Keys, InputParser, parseInput } from "../src/tui.mjs";
 import { truncateAnsi, visibleWidth, stripAnsi, style } from "../src/format.mjs";
 
-function harness(lines, { rows = 8, columns = 40, input } = {}) {
+function harness(lines, { rows = 8, columns = 40, input, repaintMs = 0 } = {}) {
   const stdin = Object.assign(new EventEmitter(), { isRaw: false, setRawMode() {}, setEncoding() {}, resume() {}, pause() {} });
   const writes = [];
   const stdout = Object.assign(new EventEmitter(), { rows, columns, write: chunk => { writes.push(String(chunk)); return true; } });
@@ -18,7 +18,7 @@ function harness(lines, { rows = 8, columns = 40, input } = {}) {
   const ui = new TerminalUI({
     render: () => { renders++; return lines(); },
     input: key => { keys.push(key); input?.(key); }, paste: text => pastes.push(text),
-    stdin, stdout, schedule: fn => queued.push(fn),
+    stdin, stdout, repaintMs, schedule: fn => queued.push(fn),
     setTimeout: (fn, delay) => {
       const id = ++timerId;
       timers.set(id, { fn, at: now + delay });
@@ -299,4 +299,21 @@ test("wrapped colored lines keep their indentation", async () => {
   const { wrapAnsi } = await import("../src/layout.mjs");
   const lines = wrapAnsi(style.dim("  alpha beta gamma delta epsilon"), 14).map(stripAnsi);
   assert.ok(lines.slice(1).every(line => line.startsWith("  ")), JSON.stringify(lines));
+});
+
+test("periodic repaint rewrites unchanged rows without input", () => {
+  const h = harness(() => ["alpha", "beta"], { repaintMs: 30_000 });
+  h.ui.start();
+  h.tick();
+  h.writes.length = 0;
+  h.ui.draw(); h.tick();
+  assert.equal(h.writes.length, 0, "unchanged frame is not rewritten");
+  h.advanceTime(30_000); h.tick();
+  const out = h.writes.join("");
+  assert.match(out, /\x1b\[\?25l/, "modes are reasserted");
+  assert.match(out, /\x1b\[2J/, "screen is cleared");
+  assert.match(out, /alpha/);
+  assert.match(out, /beta/);
+  h.ui.stop();
+  assert.equal(h.timers.size, 0, "stop cancels the repaint timer");
 });

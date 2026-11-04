@@ -7,6 +7,11 @@ const SYNC_BEGIN = "\x1b[?2026h";
 const SYNC_END = "\x1b[?2026l";
 // Alternate screen, hidden cursor, autowrap off (a full-width last row can never scroll).
 const ENTER = "\x1b[?1049h\x1b[?25l\x1b[?7l\x1b[?2004h\x1b[2J\x1b[H";
+// Modes a terminal reset or suspend/resume can drop; safe to resend on every forced repaint.
+const REASSERT = "\x1b[?25l\x1b[?7l\x1b[?2004h";
+// A slow full repaint heals a screen the terminal lost behind our back (multiplexer
+// reattach, emulator reset); the row diff alone would never rewrite unchanged rows.
+const REPAINT_MS = 30_000;
 const LEAVE = "\x1b[?2004l\x1b[0m\x1b[?7h\x1b[?25h\x1b[?1049l";
 
 // Application-cursor (SS3) and alternate CSI forms normalized to the canonical keys below.
@@ -174,6 +179,9 @@ export class TerminalUI {
   #clearTimer;
   #escapeTimeout;
   #escapeTimer;
+  #repaintMs;
+  #repaintTimer;
+  #onResume;
   #stdin;
   #stdout;
   #schedule;
@@ -188,18 +196,20 @@ export class TerminalUI {
 
   constructor({ render, input, paste = () => {}, stdin = process.stdin, stdout = process.stdout,
     schedule = setImmediate, setTimeout: setTimer = globalThis.setTimeout,
-    clearTimeout: clearTimer = globalThis.clearTimeout, escapeTimeout = 30 }) {
+    clearTimeout: clearTimer = globalThis.clearTimeout, escapeTimeout = 30, repaintMs = REPAINT_MS }) {
     this.#render = render;
     this.#input = input;
     this.#paste = paste;
     this.#setTimer = setTimer;
     this.#clearTimer = clearTimer;
     this.#escapeTimeout = escapeTimeout;
+    this.#repaintMs = repaintMs;
     this.#stdin = stdin;
     this.#stdout = stdout;
     this.#schedule = schedule;
     this.#onData = data => this.#handleData(data);
     this.#onResize = () => { this.#invalid = true; this.draw(); };
+    this.#onResume = () => this.repaint();
   }
 
   get rows() { return Math.max(8, this.#stdout.rows || 24); }
@@ -215,15 +225,40 @@ export class TerminalUI {
     this.#stdin.resume?.();
     this.#stdin.on("data", this.#onData);
     this.#stdout.on?.("resize", this.#onResize);
+    process.on?.("SIGCONT", this.#onResume);
     this.#stdout.write(ENTER);
     this.#invalid = true;
     this.flush();
+    this.#armRepaint();
+  }
+
+  /** Force the next frame to rewrite every row and restore terminal modes. */
+  repaint() {
+    if (!this.#started) return;
+    this.#stdout.write(REASSERT);
+    this.#invalid = true;
+    this.draw();
+  }
+
+  #armRepaint() {
+    if (!(this.#repaintMs > 0)) return;
+    this.#clearTimer(this.#repaintTimer);
+    this.#repaintTimer = this.#setTimer(() => {
+      this.#repaintTimer = undefined;
+      if (!this.#started) return;
+      this.repaint();
+      this.#armRepaint();
+    }, this.#repaintMs);
+    this.#repaintTimer?.unref?.();
   }
 
   stop() {
     if (!this.#started) return;
     this.#started = false;
     this.#cancelEscapeTimer();
+    if (this.#repaintTimer !== undefined) this.#clearTimer(this.#repaintTimer);
+    this.#repaintTimer = undefined;
+    process.off?.("SIGCONT", this.#onResume);
     this.#parser.reset();
     this.#pending = false;
     this.#stdin.off("data", this.#onData);
