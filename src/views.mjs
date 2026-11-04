@@ -1,7 +1,7 @@
 import { aggregateCacheByProvider, cacheRate, sortModels } from "./stats.mjs";
-import { modelPerformanceRows } from "./intelligence.mjs";
+import { forecastIsTrustworthy, modelPerformanceRows } from "./intelligence.mjs";
 import { buildOverviewIntelligence } from "./overview-intelligence.mjs";
-import { quotaDisplayGroups, quotaLimitTitle } from "./quota.mjs";
+import { disabledAccounts, quotaDisplayGroups, quotaLimitTitle } from "./quota.mjs";
 import { contentGeometry, joinColumns, joinPanels, renderMetricGrid, sectionTitle, wrapLines } from "./layout.mjs";
 import { t } from "./i18n.mjs";
 import {
@@ -165,15 +165,16 @@ function denseQuotaTitle(limit, groupLabel = "") {
 function quotaRiskLevel(limit, fraction) {
   const intel = limit?.intelligence ?? {};
   const status = String(intel.status ?? limit?.status ?? "");
-  const pace = Number.isFinite(Number(intel.recentPaceRatio)) ? Number(intel.recentPaceRatio) : Number(intel.paceRatio);
+  const pace = Number.isFinite(Number(intel.paceRatio)) ? Number(intel.paceRatio) : Number(intel.recentPaceRatio);
   const accel = Number(intel.accelerationRatio);
   if (status === "exhausted" || Number(fraction) >= 1) return "critical";
   if (status === "at-risk") return "critical";
+  const trusted = forecastIsTrustworthy(intel);
   if (status === "watch"
-    || intel.burnTrend === "spike"
-    || intel.burnTrend === "elevated"
-    || (Number.isFinite(pace) && pace >= 0.8)
-    || (Number.isFinite(accel) && accel >= 1.5)
+    || (trusted && (intel.burnTrend === "spike"
+      || intel.burnTrend === "elevated"
+      || (Number.isFinite(pace) && pace >= 0.8)
+      || (Number.isFinite(accel) && accel >= 1.5)))
     || Number(fraction) >= 0.8) return "watch";
   return "normal";
 }
@@ -182,15 +183,15 @@ function quotaIntelligenceInteresting(limit) {
   const intel = limit?.intelligence;
   if (!intel || (intel.sampleCount ?? 0) < 2) return false;
   const status = String(intel.status ?? limit?.status ?? "");
-  const pace = Number.isFinite(Number(intel.recentPaceRatio)) ? Number(intel.recentPaceRatio) : Number(intel.paceRatio);
+  const pace = Number.isFinite(Number(intel.paceRatio)) ? Number(intel.paceRatio) : Number(intel.recentPaceRatio);
   const accel = Number(intel.accelerationRatio);
   return status === "exhausted"
     || status === "at-risk"
     || status === "watch"
-    || intel.burnTrend === "spike"
-    || intel.burnTrend === "elevated"
-    || (Number.isFinite(pace) && pace >= 0.8)
-    || (Number.isFinite(accel) && accel >= 1.5);
+    || (forecastIsTrustworthy(intel) && (intel.burnTrend === "spike"
+      || intel.burnTrend === "elevated"
+      || (Number.isFinite(pace) && pace >= 0.8)
+      || (Number.isFinite(accel) && accel >= 1.5)));
 }
 
 function denseQuotaBar(fraction, width, risk) {
@@ -475,10 +476,10 @@ function compactQuotaBucket(alert) {
 }
 
 function quotaEtaCountdown(quota, now = Date.now()) {
-  const projected = Number.isFinite(Number(quota?.recentProjectedExhaustAt))
-    ? Number(quota.recentProjectedExhaustAt)
-    : Number.isFinite(Number(quota?.projectedExhaustAt))
-      ? Number(quota.projectedExhaustAt)
+  const projected = Number.isFinite(Number(quota?.projectedExhaustAt))
+    ? Number(quota.projectedExhaustAt)
+    : Number.isFinite(Number(quota?.recentProjectedExhaustAt))
+      ? Number(quota.recentProjectedExhaustAt)
       : undefined;
   return Number.isFinite(projected) ? formatCountdown(projected, now) : "-";
 }
@@ -785,13 +786,13 @@ function tableCell(value, width) {
 
 function intelligenceLine(limit, now = Date.now()) {
   const intel = limit?.intelligence;
-  const burnValue = Number.isFinite(intel?.recentBurnPerHour) ? intel.recentBurnPerHour : intel?.burnPerHour;
+  const burnValue = Number.isFinite(intel?.burnPerHour) ? intel.burnPerHour : intel?.recentBurnPerHour;
   if (!intel || (intel.sampleCount ?? 0) < 2 || !Number.isFinite(burnValue)) return style.dim(t("quota.collecting"));
   const burn = formatPercentPerHour(burnValue);
-  const projected = Number.isFinite(Number(intel.recentProjectedExhaustAt))
-    ? Number(intel.recentProjectedExhaustAt)
-    : Number.isFinite(Number(intel.projectedExhaustAt))
-      ? Number(intel.projectedExhaustAt)
+  const projected = Number.isFinite(Number(intel.projectedExhaustAt))
+    ? Number(intel.projectedExhaustAt)
+    : Number.isFinite(Number(intel.recentProjectedExhaustAt))
+      ? Number(intel.recentProjectedExhaustAt)
       : undefined;
   const eta = intel.status === "exhausted"
     ? t("time.due")
@@ -799,7 +800,7 @@ function intelligenceLine(limit, now = Date.now()) {
       ? formatCountdown(projected, now)
       : "-";
   const sustainable = formatPercentPerHour(intel.sustainablePerHour);
-  const paceValue = Number.isFinite(intel.recentPaceRatio) ? intel.recentPaceRatio : intel.paceRatio;
+  const paceValue = Number.isFinite(intel.paceRatio) ? intel.paceRatio : intel.recentPaceRatio;
   const pace = Number.isFinite(paceValue) ? `${paceValue.toFixed(2)}×` : "-";
   let text = t("quota.intelligence", { burn, eta, sustainable, pace });
   if (Number.isFinite(intel.baselineBurnPerHour) && Number.isFinite(intel.accelerationRatio)) {
@@ -817,8 +818,9 @@ function renderQuota(context, width) {
   const { quota, providerStates = new Map(), quotaRefreshing } = context;
   const now = context.now ?? Date.now();
   const reports = quota?.reports ?? [];
+  const disabled = disabledAccounts(quota);
   const lines = [sectionTitle(t("section.quotaRunway"), width)];
-  if (!reports.length) {
+  if (!reports.length && !disabled.length) {
     lines.push(quotaRefreshing ? style.dim(t("quota.waiting")) : style.dim(t("quota.none")));
     return lines;
   }
@@ -830,7 +832,8 @@ function renderQuota(context, width) {
     grouped.set(report.provider, bucket);
   }
 
-  for (const provider of [...grouped.keys()].sort((a, b) => providerLabel(a).localeCompare(providerLabel(b)))) {
+  const providers = new Set([...grouped.keys(), ...disabled.map(account => account.provider)]);
+  for (const provider of [...providers].sort((a, b) => providerLabel(a).localeCompare(providerLabel(b)))) {
     const providerReports = grouped.get(provider) ?? [];
     lines.push("");
     const state = providerStateText(providerStates.get(provider), quotaRefreshing);
@@ -847,6 +850,7 @@ function renderQuota(context, width) {
         const resets = resetCreditsText(report, now);
         lines.push(`   ${style.cyan(identity)}${plan ? style.dim(` · ${plan}`) : ""}${resets ? ` · ${style.cyan(resets)}` : ""}`);
 
+        if (report.missingFromFresh) lines.push(style.dim(t("quota.accountStale", { time: formatClock(report.fetchedAt) })));
         const groups = quotaDisplayGroups(report);
         const hasLimits = groups.some(group => group.limits.length > 0);
         if (!hasLimits) {
@@ -895,6 +899,15 @@ function renderQuota(context, width) {
           }
         }
       });
+
+    for (const account of disabled.filter(item => item.provider === provider)) {
+      lines.push(`   ${style.cyan(account.account || t("common.account"))}  ${style.red(t("quota.loginExpired"))}`);
+      lines.push(style.red(t("quota.loginExpiredHint")));
+      if (account.cause) {
+        const indent = "     ";
+        lines.push(...wrapLines([account.cause], Math.max(10, width - indent.length)).map(line => style.dim(indent + line)));
+      }
+    }
   }
   return lines;
 }

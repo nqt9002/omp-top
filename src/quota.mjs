@@ -1,6 +1,6 @@
 import { parseNoisyJson } from "./json.mjs";
 import { resolveAgentDbPath, spawnUsage } from "./omp.mjs";
-import { quotaIntelligenceBySeries, quotaSeriesKey } from "./intelligence.mjs";
+import { forecastIsTrustworthy, quotaIntelligenceBySeries, quotaSeriesKey } from "./intelligence.mjs";
 
 const LOOKBACK_MS = 30 * 24 * 60 * 60 * 1000;
 const POLL_MS = 400;
@@ -23,6 +23,23 @@ export function quotaLimitTitle(limit) {
     label += ` (${windowLabel})`;
   }
   return label;
+}
+
+/** Accounts OMP disabled because their credentials stopped working (for example an expired OAuth login). */
+export function disabledAccounts(payload) {
+  const list = Array.isArray(payload?.disabledCredentials) ? payload.disabledCredentials : [];
+  return list.filter(item => item && typeof item.provider === "string").map(item => {
+    const text = key => typeof item[key] === "string" && item[key].trim() ? item[key].trim() : "";
+    return {
+      key: [item.provider, item.id ?? "", text("accountId") || text("email")].join("\0"),
+      provider: item.provider,
+      email: text("email"),
+      accountId: text("accountId"),
+      account: text("email") || text("accountId") || text("orgName") || (item.id !== undefined ? `#${item.id}` : ""),
+      cause: text("cause"),
+      disabledAtMs: Number.isFinite(item.disabledAtMs) ? item.disabledAtMs : undefined,
+    };
+  });
 }
 
 export function quotaLimitIdsForDisplay(report) {
@@ -331,25 +348,39 @@ function rebaseHistoricalIntelligence(previousLimit, freshLimit, observedAt) {
   }
 
   const providerStatus = String(freshLimit?.status ?? "");
-  const forecastExhaustAt = Number.isFinite(intelligence.recentProjectedExhaustAt)
-    ? intelligence.recentProjectedExhaustAt
-    : intelligence.projectedExhaustAt;
-  const forecastPace = Number.isFinite(intelligence.recentPaceRatio)
-    ? intelligence.recentPaceRatio
-    : intelligence.paceRatio;
+  const forecastExhaustAt = Number.isFinite(intelligence.projectedExhaustAt)
+    ? intelligence.projectedExhaustAt
+    : intelligence.recentProjectedExhaustAt;
+  const forecastPace = Number.isFinite(intelligence.paceRatio)
+    ? intelligence.paceRatio
+    : intelligence.recentPaceRatio;
   const used = Number.isFinite(intelligence.usedFraction) ? intelligence.usedFraction : freshUsed;
 
   if (providerStatus === "exhausted" || (Number.isFinite(used) && used >= 1)) intelligence.status = "exhausted";
-  else if (Number.isFinite(forecastExhaustAt) && Number.isFinite(freshReset) && forecastExhaustAt < freshReset) intelligence.status = "at-risk";
-  else if (Number.isFinite(forecastPace) && forecastPace >= 0.8) intelligence.status = "watch";
+  else if (forecastIsTrustworthy(intelligence) && Number.isFinite(forecastExhaustAt) && Number.isFinite(freshReset) && forecastExhaustAt < freshReset) intelligence.status = "at-risk";
+  else if (forecastIsTrustworthy(intelligence) && Number.isFinite(forecastPace) && forecastPace >= 0.8) intelligence.status = "watch";
   else if (Number.isFinite(intelligence.burnPerHour) || Number.isFinite(intelligence.recentBurnPerHour)) intelligence.status = "ok";
   else intelligence.status = "unknown";
 
   return intelligence;
 }
 
-/** Enrich authoritative final usage JSON with matching read-only history intelligence, without reintroducing stale accounts/limits. */
-export function enrichQuotaPayload(freshPayload, historicalPayload) {
+const RETAIN_MISSING_ACCOUNT_MS = 60 * 60 * 1000;
+
+function matchesDisabledAccount(report, disabled) {
+  const metadata = report?.metadata ?? {};
+  return disabled.some(account => report.provider === account.provider && (
+    (account.email && account.email === metadata.email) || (account.accountId && account.accountId === metadata.accountId)));
+}
+
+/**
+ * Enrich authoritative final usage JSON with matching read-only history intelligence.
+ * Limits are never reintroduced. An account seen recently in history that this fetch did not
+ * return (and OMP did not report as disabled) is kept, marked stale, so a transient provider
+ * failure does not make it vanish. Only the last hour is retained, and only windows that have
+ * not reset yet, so old identities of a re-added account do not linger as phantom accounts.
+ */
+export function enrichQuotaPayload(freshPayload, historicalPayload, { now = Date.now() } = {}) {
   const freshReports = Array.isArray(freshPayload?.reports) ? freshPayload.reports : [];
   const historicalReports = Array.isArray(historicalPayload?.reports) ? historicalPayload.reports : [];
   const byProvider = new Map();
@@ -359,13 +390,22 @@ export function enrichQuotaPayload(freshPayload, historicalPayload) {
     byProvider.set(report.provider, bucket);
   }
   const ordinals = new Map();
+  const used = new Set();
+  const freshIdentities = new Set(freshReports.map(reportIdentity).filter(Boolean));
   const reports = freshReports.map(fresh => {
     const candidates = byProvider.get(fresh.provider) ?? [];
     const ordinal = ordinals.get(fresh.provider) ?? 0;
     ordinals.set(fresh.provider, ordinal + 1);
     const identity = reportIdentity(fresh);
-    const old = (identity && candidates.find(report => reportIdentity(report) === identity)) || candidates[ordinal];
+    let old = identity ? candidates.find(report => !used.has(report) && reportIdentity(report) === identity) : undefined;
+    // Positional pairing covers redacted output, but must never claim an account
+    // that another fresh report identifies by name.
+    if (!old) {
+      const positional = candidates[ordinal];
+      if (positional && !used.has(positional) && !freshIdentities.has(reportIdentity(positional))) old = positional;
+    }
     if (!old) return fresh;
+    used.add(old);
     const oldLimits = new Map((old.limits ?? []).map(limit => [limit.id || limit.label || JSON.stringify(limit.scope ?? {}), limit]));
     const observedAt = Number(fresh.fetchedAt ?? freshPayload?.generatedAt ?? Date.now());
     const limits = (fresh.limits ?? []).map(limit => {
@@ -387,6 +427,14 @@ export function enrichQuotaPayload(freshPayload, historicalPayload) {
     });
     return { ...old, ...fresh, metadata: { ...old.metadata, ...fresh.metadata }, limits };
   });
+  const disabled = disabledAccounts(freshPayload);
+  for (const old of historicalReports) {
+    if (used.has(old) || !(now - Number(old.fetchedAt) <= RETAIN_MISSING_ACCOUNT_MS)) continue;
+    if (matchesDisabledAccount(old, disabled) || freshIdentities.has(reportIdentity(old))) continue;
+    const limits = (old.limits ?? []).filter(limit => !(Number(limit?.window?.resetsAt) <= now));
+    if (!limits.length) continue;
+    reports.push({ ...old, limits, status: "stale", missingFromFresh: true });
+  }
   return { ...freshPayload, reports };
 }
 

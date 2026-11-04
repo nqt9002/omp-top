@@ -6,7 +6,7 @@ import { renderInspection } from './inspection.mjs';
 import { TerminalUI, Keys } from "./tui.mjs";
 import { fetchStats } from "./omp.mjs";
 import { normalizeStats } from "./stats.mjs";
-import { loadHistoricalQuota, mergeProviderReports, ProgressiveQuotaRefresh } from "./quota.mjs";
+import { disabledAccounts, loadHistoricalQuota, mergeProviderReports, ProgressiveQuotaRefresh } from "./quota.mjs";
 import { style, providerLabel, formatCountdown, truncateAnsi } from "./format.mjs";
 import {
   composeSides, fitSegments, frameBottom, frameDivider, frameRow, frameTop, offsetLine, workspaceGeometry, wrapLines,
@@ -47,6 +47,7 @@ export class OmpTopApp {
   #alerts = new QuotaAlertPolicy();
   #snapshot = { stats: undefined, quota: undefined, cacheDiagnostics: undefined, statsUpdatedAt: undefined, quotaUpdatedAt: undefined };
   #states = new Map();
+  #reportedDisabled = new Set();
   #events = [];
   #status = "";
   #statusAt = 0;
@@ -264,6 +265,14 @@ export class OmpTopApp {
       },
       onComplete: payload => {
         if (this.#disposed || this.#quotaRun !== runner) return;
+        if (!payload.reports?.length && this.#snapshot.quota?.reports?.length) {
+          // An empty answer is a failed fetch, not proof that every account is gone.
+          this.#snapshot.quota = { ...this.#snapshot.quota, disabledCredentials: payload.disabledCredentials };
+          for (const [provider, state] of this.#states) this.#states.set(provider, { ...state, status: "stale" });
+          this.#pushEvent("warn", t("top.quotaEmptyKeptEvent"));
+          this.setStatus(style.yellow(t("top.quotaEmptyKeptEvent")));
+          return;
+        }
         this.#snapshot.quota = payload;
         const reportTimes = (payload.reports ?? []).map(report => Number(report.fetchedAt)).filter(Number.isFinite);
         this.#snapshot.quotaUpdatedAt = reportTimes.length
@@ -279,6 +288,11 @@ export class OmpTopApp {
           if (!live.has(provider) && state.status === "refreshing") this.#states.set(provider, { ...state, status: "stale" });
         }
         this.#notifyQuota();
+        for (const account of disabledAccounts(payload)) {
+          if (this.#reportedDisabled.has(account.key)) continue;
+          this.#reportedDisabled.add(account.key);
+          this.#pushEvent("warn", t("top.loginExpiredEvent", { provider: providerLabel(account.provider), account: account.account }));
+        }
         this.#pushEvent("ok", t("top.quotaCompleteEvent", { count: live.size }));
         this.setStatus(t("top.quotaComplete"));
       },

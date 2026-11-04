@@ -1,4 +1,4 @@
-import { modelPerformanceRows } from "./intelligence.mjs";
+import { forecastIsTrustworthy, modelPerformanceRows } from "./intelligence.mjs";
 import { quotaDisplayGroups } from "./quota.mjs";
 import { aggregateCacheByProvider, cacheRate } from "./stats.mjs";
 import { usedFraction } from "./format.mjs";
@@ -136,14 +136,18 @@ function modelFacts(stats) {
 function flattenQuota(quota) {
   const rows = [];
   for (const report of quota?.reports ?? []) {
+    // Accounts kept from history after a failed fetch must not raise live alerts.
+    if (report?.missingFromFresh) continue;
     for (const group of quotaDisplayGroups(report)) {
       for (const limit of group.limits ?? []) {
         const intel = limit?.intelligence ?? {};
         const fraction = usedFraction(limit?.amount ?? {});
-        const projectedExhaustAt = finite(intel.recentProjectedExhaustAt) ?? finite(intel.projectedExhaustAt);
-        const etaHours = finite(intel.recentEtaHours) ?? finite(intel.etaHours);
-        const paceRatio = finite(intel.recentPaceRatio) ?? finite(intel.paceRatio);
-        const burnPerHour = finite(intel.recentBurnPerHour) ?? finite(intel.burnPerHour);
+        const projectedExhaustAt = finite(intel.projectedExhaustAt) ?? finite(intel.recentProjectedExhaustAt);
+        const etaHours = finite(intel.etaHours) ?? finite(intel.recentEtaHours);
+        // Early or low-usage windows give noisy forecasts; keep them out of decisions.
+        const trusted = forecastIsTrustworthy(intel);
+        const paceRatio = trusted ? finite(intel.paceRatio) ?? finite(intel.recentPaceRatio) : undefined;
+        const burnPerHour = finite(intel.burnPerHour) ?? finite(intel.recentBurnPerHour);
         rows.push({
           report,
           provider: String(report?.provider ?? limit?.scope?.provider ?? "unknown"),
@@ -158,7 +162,7 @@ function flattenQuota(quota) {
           paceRatio,
           burnPerHour,
           baselineBurnPerHour: finite(intel.baselineBurnPerHour),
-          accelerationRatio: finite(intel.accelerationRatio),
+          accelerationRatio: trusted ? finite(intel.accelerationRatio) : undefined,
           burnTrend: String(intel.burnTrend ?? "unknown"),
           modelId: typeof limit?.scope?.modelId === "string" ? limit.scope.modelId : undefined,
         });
