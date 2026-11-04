@@ -173,3 +173,26 @@ test("dispose clears countdown and auto-refresh timers", async () => {
   assert.equal(clock.timeouts.filter(timer => !timer.cleared).length, 0);
   assert.equal(clock.intervals.filter(timer => !timer.cleared).length, 0);
 });
+
+test("an empty quota answer after good data keeps the previous accounts", async () => {
+  setLocale("en");
+  const clock = fakeClock();
+  const good = { generatedAt: clock.now(), reports: [{ provider: "anthropic", fetchedAt: clock.now(), metadata: { email: "keep@example.test" }, limits: [{ id: "anthropic:5h", label: "5h", amount: { usedFraction: 0.1, unit: "percent" }, status: "ok" }] }] };
+  const answers = [good, { generatedAt: clock.now(), reports: [] }];
+  const ui = { rows: 32, start() {}, stop() {}, draw() {} };
+  const app = new OmpTopApp({ ui, deps: {
+    now: clock.now, setTimeout: clock.setTimeout, clearTimeout: clock.clearTimeout,
+    setInterval: clock.setInterval, clearInterval: clock.clearInterval,
+    fetchStats: async () => ({ overall: {}, byModel: [] }),
+    loadCacheDiagnostics: async () => undefined,
+    loadHistoricalQuota: async () => ({ payload: undefined }),
+    createQuotaRefresh: () => ({ cancel() {}, run: async (_r, callbacks) => { callbacks.onComplete?.(answers.shift()); } }),
+  } });
+  try {
+    await app.refresh(); await flush();
+    app.startQuotaRefresh(); await flush();
+    app.handleInput("2");
+    const screen = stripAnsi(app.render(120, 40).join("\n"));
+    assert.match(screen, /keep@example\.test/);
+  } finally { app.dispose(); }
+});

@@ -33,6 +33,8 @@ export function disabledAccounts(payload) {
     return {
       key: [item.provider, item.id ?? "", text("accountId") || text("email")].join("\0"),
       provider: item.provider,
+      email: text("email"),
+      accountId: text("accountId"),
       account: text("email") || text("accountId") || text("orgName") || (item.id !== undefined ? `#${item.id}` : ""),
       cause: text("cause"),
       disabledAtMs: Number.isFinite(item.disabledAtMs) ? item.disabledAtMs : undefined,
@@ -363,8 +365,21 @@ function rebaseHistoricalIntelligence(previousLimit, freshLimit, observedAt) {
   return intelligence;
 }
 
-/** Enrich authoritative final usage JSON with matching read-only history intelligence, without reintroducing stale accounts/limits. */
-export function enrichQuotaPayload(freshPayload, historicalPayload) {
+const RETAIN_MISSING_ACCOUNT_MS = 7 * 24 * 60 * 60 * 1000;
+
+function matchesDisabledAccount(report, disabled) {
+  const metadata = report?.metadata ?? {};
+  return disabled.some(account => report.provider === account.provider && (
+    (account.email && account.email === metadata.email) || (account.accountId && account.accountId === metadata.accountId)));
+}
+
+/**
+ * Enrich authoritative final usage JSON with matching read-only history intelligence.
+ * Limits are never reintroduced. An account seen recently in history that this fetch did not
+ * return (and OMP did not report as disabled) is kept, marked stale, so a transient provider
+ * failure does not make it vanish.
+ */
+export function enrichQuotaPayload(freshPayload, historicalPayload, { now = Date.now() } = {}) {
   const freshReports = Array.isArray(freshPayload?.reports) ? freshPayload.reports : [];
   const historicalReports = Array.isArray(historicalPayload?.reports) ? historicalPayload.reports : [];
   const byProvider = new Map();
@@ -374,13 +389,22 @@ export function enrichQuotaPayload(freshPayload, historicalPayload) {
     byProvider.set(report.provider, bucket);
   }
   const ordinals = new Map();
+  const used = new Set();
+  const freshIdentities = new Set(freshReports.map(reportIdentity).filter(Boolean));
   const reports = freshReports.map(fresh => {
     const candidates = byProvider.get(fresh.provider) ?? [];
     const ordinal = ordinals.get(fresh.provider) ?? 0;
     ordinals.set(fresh.provider, ordinal + 1);
     const identity = reportIdentity(fresh);
-    const old = (identity && candidates.find(report => reportIdentity(report) === identity)) || candidates[ordinal];
+    let old = identity ? candidates.find(report => !used.has(report) && reportIdentity(report) === identity) : undefined;
+    // Positional pairing covers redacted output, but must never claim an account
+    // that another fresh report identifies by name.
+    if (!old) {
+      const positional = candidates[ordinal];
+      if (positional && !used.has(positional) && !freshIdentities.has(reportIdentity(positional))) old = positional;
+    }
     if (!old) return fresh;
+    used.add(old);
     const oldLimits = new Map((old.limits ?? []).map(limit => [limit.id || limit.label || JSON.stringify(limit.scope ?? {}), limit]));
     const observedAt = Number(fresh.fetchedAt ?? freshPayload?.generatedAt ?? Date.now());
     const limits = (fresh.limits ?? []).map(limit => {
@@ -402,6 +426,12 @@ export function enrichQuotaPayload(freshPayload, historicalPayload) {
     });
     return { ...old, ...fresh, metadata: { ...old.metadata, ...fresh.metadata }, limits };
   });
+  const disabled = disabledAccounts(freshPayload);
+  for (const old of historicalReports) {
+    if (used.has(old) || !(now - Number(old.fetchedAt) <= RETAIN_MISSING_ACCOUNT_MS)) continue;
+    if (matchesDisabledAccount(old, disabled)) continue;
+    reports.push({ ...old, status: "stale", missingFromFresh: true });
+  }
   return { ...freshPayload, reports };
 }
 
