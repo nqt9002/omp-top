@@ -526,3 +526,16 @@ test("Overview stays within a compact line budget under multiple alerts", () => 
   assert.doesNotMatch(screen, /Recommendation:/);
   assert.doesNotMatch(screen, /workload attribution, not direct/);
 });
+
+test("accounts kept from history after a failed fetch raise no quota alerts", () => {
+  const now = Date.now();
+  const limit = { id: "weekly", label: "Weekly", window: { resetsAt: now + HOUR }, amount: { usedFraction: 0.95 },
+    intelligence: { status: "at-risk", recentEtaHours: 0.5, recentProjectedExhaustAt: now + 0.5 * HOUR } };
+  const build = extra => buildOverviewIntelligence({
+    stats: normalizeStats({ byModel: [] }),
+    quota: { reports: [{ provider: "xai-oauth", fetchedAt: now, limits: [limit], ...extra }] },
+    now,
+  });
+  assert.ok(build({}).alerts.some(alert => alert.kind.startsWith("quota")));
+  assert.equal(build({ missingFromFresh: true, status: "stale" }).alerts.some(alert => alert.kind.startsWith("quota")), false);
+});

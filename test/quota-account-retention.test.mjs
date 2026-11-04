@@ -17,10 +17,24 @@ test("an account missing from the fresh fetch is kept as stale", () => {
   assert.equal(out.reports[0].missingFromFresh, undefined);
 });
 
-test("accounts not seen for over a week are dropped", () => {
+test("accounts not seen for over an hour are dropped", () => {
   const out = enrichQuotaPayload({ reports: [report("anthropic", "a@x.test")] },
-    { reports: [report("anthropic", "old@x.test", NOW - 8 * 86_400_000)] }, { now: NOW });
+    { reports: [report("anthropic", "old@x.test", NOW - 2 * 3600_000)] }, { now: NOW });
   assert.deepEqual(emails(out), ["a@x.test"]);
+});
+
+test("a second history identity of an account the fresh fetch returned is not a phantom account", () => {
+  const out = enrichQuotaPayload({ reports: [report("xai-oauth", "a@x.test")] },
+    { reports: [report("xai-oauth", "a@x.test"), report("xai-oauth", "a@x.test", NOW - 60_000)] }, { now: NOW });
+  assert.deepEqual(emails(out), ["a@x.test"]);
+});
+
+test("retained accounts drop windows that already reset and vanish when none remain", () => {
+  const expired = { ...report("anthropic", "gone@x.test"), limits: [{ ...limit("anthropic:5h"), window: { resetsAt: NOW - 1 } }] };
+  const mixed = { ...report("anthropic", "mix@x.test"), limits: [{ ...limit("a:old"), window: { resetsAt: NOW - 1 } }, limit("a:live")] };
+  const out = enrichQuotaPayload({ reports: [report("anthropic", "a@x.test")] }, { reports: [expired, mixed] }, { now: NOW });
+  assert.deepEqual(emails(out), ["a@x.test", "mix@x.test"]);
+  assert.deepEqual(out.reports[1].limits.map(l => l.id), ["a:live"]);
 });
 
 test("an account OMP reports as disabled is not retained as stale data", () => {

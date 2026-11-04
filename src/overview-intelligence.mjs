@@ -136,6 +136,8 @@ function modelFacts(stats) {
 function flattenQuota(quota) {
   const rows = [];
   for (const report of quota?.reports ?? []) {
+    // Accounts kept from history after a failed fetch must not raise live alerts.
+    if (report?.missingFromFresh) continue;
     for (const group of quotaDisplayGroups(report)) {
       for (const limit of group.limits ?? []) {
         const intel = limit?.intelligence ?? {};
