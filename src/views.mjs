@@ -1,7 +1,7 @@
 import { aggregateCacheByProvider, cacheRate, sortModels } from "./stats.mjs";
 import { modelPerformanceRows } from "./intelligence.mjs";
 import { buildOverviewIntelligence } from "./overview-intelligence.mjs";
-import { quotaDisplayGroups, quotaLimitTitle } from "./quota.mjs";
+import { disabledAccounts, quotaDisplayGroups, quotaLimitTitle } from "./quota.mjs";
 import { contentGeometry, joinColumns, joinPanels, renderMetricGrid, sectionTitle, wrapLines } from "./layout.mjs";
 import { t } from "./i18n.mjs";
 import {
@@ -817,8 +817,9 @@ function renderQuota(context, width) {
   const { quota, providerStates = new Map(), quotaRefreshing } = context;
   const now = context.now ?? Date.now();
   const reports = quota?.reports ?? [];
+  const disabled = disabledAccounts(quota);
   const lines = [sectionTitle(t("section.quotaRunway"), width)];
-  if (!reports.length) {
+  if (!reports.length && !disabled.length) {
     lines.push(quotaRefreshing ? style.dim(t("quota.waiting")) : style.dim(t("quota.none")));
     return lines;
   }
@@ -830,7 +831,8 @@ function renderQuota(context, width) {
     grouped.set(report.provider, bucket);
   }
 
-  for (const provider of [...grouped.keys()].sort((a, b) => providerLabel(a).localeCompare(providerLabel(b)))) {
+  const providers = new Set([...grouped.keys(), ...disabled.map(account => account.provider)]);
+  for (const provider of [...providers].sort((a, b) => providerLabel(a).localeCompare(providerLabel(b)))) {
     const providerReports = grouped.get(provider) ?? [];
     lines.push("");
     const state = providerStateText(providerStates.get(provider), quotaRefreshing);
@@ -895,6 +897,12 @@ function renderQuota(context, width) {
           }
         }
       });
+
+    for (const account of disabled.filter(item => item.provider === provider)) {
+      lines.push(`   ${style.cyan(account.account || t("common.account"))}  ${style.red(t("quota.loginExpired"))}`);
+      lines.push(style.red(t("quota.loginExpiredHint")));
+      if (account.cause) lines.push(...wrapLines([style.dim(t("quota.disabledCause", { cause: account.cause }))], width));
+    }
   }
   return lines;
 }
